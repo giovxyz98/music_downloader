@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import requests
 import yt_dlp
 import sys
@@ -8,11 +9,12 @@ import os
 import re
 import json
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3NoHeaderError
+from mutagen.id3 import ID3, APIC, ID3NoHeaderError
 
 # ─────────────────────────────────────────────────────────────
 # Palette
@@ -25,7 +27,26 @@ ACCENT2 = "#4f46e5"
 TEXT    = "#f9fafb"
 SUBTEXT = "#9ca3af"
 ERROR   = "#ef4444"
+SUCCESS = "#4ade80"
 BORDER  = "#4b5563"
+
+# ─────────────────────────────────────────────────────────────
+# Configurazione
+# ─────────────────────────────────────────────────────────────
+MAX_WORKERS           = 3      # download paralleli contemporanei
+PREFERRED_QUALITY     = "320"  # qualità mp3 in kbps
+SOCKET_TIMEOUT        = 30     # timeout connessione yt-dlp (secondi)
+RETRIES               = 3      # tentativi yt-dlp + MusicSearcher
+YOUTUBE_RESULTS       = 5      # risultati YouTube da valutare (senza durata Deezer)
+YOUTUBE_RESULTS_TIMED = 3      # risultati YouTube con matching durata
+DURATION_TOLERANCE    = 5      # secondi tolleranza matching durata YouTube
+FILENAME_MAX_LENGTH   = 180    # limite caratteri nome file
+MAX_SEARCHES          = 50     # ricerche recenti salvate in cache
+MAX_HISTORY           = 500    # download in cronologia
+HISTORY_MENU_MAX      = 40     # voci mostrate nel menu cronologia
+RECENT_SEARCHES_SHOWN = 10     # ricerche recenti mostrate in home
+DEEZER_ARTIST_LIMIT   = 100    # risultati ricerca artisti Deezer
+DEEZER_TRACK_LIMIT    = 50     # risultati ricerca canzoni Deezer
 
 # ─────────────────────────────────────────────────────────────
 # MusicSearcher  –  Deezer metadata client
@@ -34,7 +55,7 @@ class MusicSearcher:
     BASE = "https://api.deezer.com"
 
     def _get(self, url: str, params: Optional[Dict] = None) -> Dict:
-        for attempt in range(3):
+        for attempt in range(RETRIES):
             try:
                 r = requests.get(url, params=params, timeout=10)
                 if not r.ok:
@@ -48,13 +69,13 @@ class MusicSearcher:
                     )
                 return data
             except requests.RequestException as e:
-                print(f"[MusicSearcher] Tentativo {attempt+1}/3 fallito: {e}", file=sys.stderr)
-                if attempt == 2:
-                    raise RuntimeError(f"Richiesta fallita dopo 3 tentativi: {e}")
+                print(f"[MusicSearcher] Tentativo {attempt+1}/{RETRIES} fallito: {e}", file=sys.stderr)
+                if attempt == RETRIES - 1:
+                    raise RuntimeError(f"Richiesta fallita dopo {RETRIES} tentativi: {e}")
                 time.sleep(1 * (2 ** attempt))
 
     def search_artist(self, name: str) -> List[Dict]:
-        data = self._get(f"{self.BASE}/search/artist", {"q": name, "limit": 100})
+        data = self._get(f"{self.BASE}/search/artist", {"q": name, "limit": DEEZER_ARTIST_LIMIT})
         return [
             {
                 "id": a["id"],
@@ -67,7 +88,7 @@ class MusicSearcher:
         ]
 
     def search_track(self, query: str) -> List[Dict]:
-        data = self._get(f"{self.BASE}/search/track", {"q": query, "limit": 50})
+        data = self._get(f"{self.BASE}/search/track", {"q": query, "limit": DEEZER_TRACK_LIMIT})
         return [
             {
                 "id": t["id"],
@@ -119,6 +140,7 @@ class MusicSearcher:
             "nb_tracks":    data.get("nb_tracks", 0),
             "label":        data.get("label", ""),
             "anno":         data.get("release_date", "")[:4] or "",
+            "cover_xl":     data.get("cover_xl", ""),
         }
 
 
@@ -127,13 +149,21 @@ class MusicSearcher:
 # ─────────────────────────────────────────────────────────────
 class AudioDownloader:
 
+    _SKIP_KEYWORDS = {"karaoke", "instrumental", "8d", "sped up"}
+
     @staticmethod
     def search_youtube(query: str) -> Optional[str]:
         try:
             with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as ydl:
-                results = ydl.extract_info(f"ytsearch1:{query}", download=False)
-                if results.get("entries"):
-                    return results["entries"][0]["url"]
+                results = ydl.extract_info(f"ytsearch5:{query}", download=False)
+            entries = [e for e in (results.get("entries") or []) if e]
+            for entry in entries:
+                title = entry.get("title", "").lower()
+                if not any(kw in title for kw in AudioDownloader._SKIP_KEYWORDS):
+                    return entry["url"]
+            # fallback: primo risultato se tutti filtrati
+            if entries:
+                return entries[0]["url"]
         except Exception as e:
             print(f"[AudioDownloader] Errore ricerca '{query}': {e}", file=sys.stderr)
         return None
@@ -154,7 +184,7 @@ class AudioDownloader:
                 total      = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
                 downloaded = d.get("downloaded_bytes", 0)
                 if total:
-                    progress_callback(downloaded / total * 100)
+                    progress_callback(min(downloaded / total * 100, 100))
 
         opts = {
             "format": "bestaudio/best",
@@ -162,11 +192,13 @@ class AudioDownloader:
             "postprocessors": [{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
-                "preferredquality": "320",
+                "preferredquality": PREFERRED_QUALITY,
             }],
-            "noplaylist": True,
-            "quiet": True,
+            "noplaylist":     True,
+            "quiet":          True,
             "progress_hooks": [_hook],
+            "socket_timeout": SOCKET_TIMEOUT,
+            "retries":        RETRIES,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -178,8 +210,6 @@ class AudioDownloader:
 # ─────────────────────────────────────────────────────────────
 class CacheManager:
     CACHE_FILE = Path(__file__).parent / "music_cache.json"
-    MAX_SEARCHES = 50
-    MAX_HISTORY  = 500
 
     def __init__(self):
         self.data = {"recent_searches": [], "download_history": []}
@@ -212,7 +242,7 @@ class CacheManager:
             "query": query,
             "date": datetime.now().isoformat(timespec="seconds"),
         })
-        self.data["recent_searches"] = self.data["recent_searches"][:self.MAX_SEARCHES]
+        self.data["recent_searches"] = self.data["recent_searches"][:MAX_SEARCHES]
         self.save()
 
     def add_download(self, entry: dict):
@@ -220,10 +250,10 @@ class CacheManager:
             **entry,
             "date": datetime.now().isoformat(timespec="seconds"),
         })
-        self.data["download_history"] = self.data["download_history"][:self.MAX_HISTORY]
+        self.data["download_history"] = self.data["download_history"][:MAX_HISTORY]
         self.save()
 
-    def get_recent_searches(self, limit: int = 10) -> List[Dict]:
+    def get_recent_searches(self, limit: int = RECENT_SEARCHES_SHOWN) -> List[Dict]:
         return self.data["recent_searches"][:limit]
 
     def get_download_history(self) -> List[Dict]:
@@ -274,13 +304,22 @@ class MusicDownloaderApp:
         self.downloader = AudioDownloader()
         self.cache      = CacheManager()
 
-        self.download_queue:    list = []
-        self.current_artist:    dict = None
-        self.current_albums:    list = []
-        self.filtered_albums:   list = []
-        self.current_tracks:    list = []
-        self._genre_cache:      dict = {}   # album_id → genre str
-        self._nb_tracks_cache:  dict = {}   # album_id → int
+        self.download_queue:   list = []
+        self.current_artist:   dict = None
+        self.current_albums:   list = []
+        self.filtered_albums:  list = []
+        self.current_tracks:   list = []
+        self._genre_cache:     dict = {}   # album_id → genre str
+        self._nb_tracks_cache: dict = {}   # album_id → int
+        self._cover_cache:     dict = {}   # album_id → cover_xl url
+        self._youtube_cache:   dict = {}   # query → youtube url
+
+        # Widget del pannello download (impostati durante il download)
+        self._dl_active_frame: tk.Frame        = None
+        self._dl_done_listbox: tk.Listbox      = None
+        self._dl_general_bar:  ttk.Progressbar = None
+        self._dl_general_var:  tk.StringVar    = None
+        self._track_widgets:   dict            = {}  # item_id → (frame, bar)
 
         self._setup_menubar()
         self._build_layout()
@@ -356,18 +395,18 @@ class MusicDownloaderApp:
         if not history:
             self.history_menu.add_command(label="Nessun download ancora", state="disabled")
         else:
-            for entry in history[:40]:
-                date  = entry.get("date", "")[:10]
-                nome  = entry.get("nome", "?")
+            for entry in history[:HISTORY_MENU_MAX]:
+                date    = entry.get("date", "")[:10]
+                nome    = entry.get("nome", "?")
                 artista = entry.get("artista", "")
-                tipo  = "[A]" if entry.get("type") == "album" else "[T]"
-                ok    = entry.get("successi", "?")
-                tot   = entry.get("totale", "?")
-                label = f"{tipo} {nome}"
+                tipo    = "[A]" if entry.get("type") == "album" else "[T]"
+                ok      = entry.get("successi", "?")
+                tot     = entry.get("totale", "?")
+                label   = f"{tipo} {nome}"
                 if artista:
                     label += f"  —  {artista}"
                 label += f"  ({ok}/{tot})  [{date}]"
-                dest  = entry.get("destination", "")
+                dest = entry.get("destination", "")
                 self.history_menu.add_command(
                     label=label,
                     command=(lambda d=dest: self._open_folder(d)) if dest else None,
@@ -447,16 +486,115 @@ class MusicDownloaderApp:
         )
         self.btn_download.pack(fill="x", padx=10, pady=(6, 12))
 
-        self.progress_outer = tk.Frame(self.queue_panel, bg=PANEL)
-        self.progress_label = tk.Label(self.progress_outer, text="",
-                                       font=("Segoe UI", 8), wraplength=240,
-                                       bg=PANEL, fg=SUBTEXT)
-        self.progress_label.pack()
-        self.progress_bar = ttk.Progressbar(
-            self.progress_outer, orient="horizontal", length=240,
+    # ── Pannello download ────────────────────────────────────
+
+    def _show_download_panel(self, total: int):
+        """Sostituisce il contenuto del queue_panel con l'UI di download."""
+        for w in self.queue_panel.winfo_children():
+            w.destroy()
+
+        tk.Label(self.queue_panel, text="Download in corso",
+                 font=("Segoe UI", 11, "bold"), bg=PANEL, fg=TEXT).pack(pady=(12, 6))
+
+        cols_frame = tk.Frame(self.queue_panel, bg=PANEL)
+        cols_frame.pack(fill="both", expand=True, padx=8)
+
+        # Colonna sinistra: "In download"
+        left = tk.Frame(cols_frame, bg=PANEL)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 4))
+        tk.Label(left, text="In download", font=("Segoe UI", 8, "bold"),
+                 bg=PANEL, fg=SUBTEXT).pack(anchor="w")
+        tk.Frame(left, height=1, bg=BORDER).pack(fill="x", pady=(2, 4))
+        self._dl_active_frame = tk.Frame(left, bg=PANEL)
+        self._dl_active_frame.pack(fill="x")
+
+        # Colonna destra: "Scaricate"
+        right = tk.Frame(cols_frame, bg=PANEL)
+        right.pack(side="right", fill="both", expand=True, padx=(4, 0))
+        tk.Label(right, text="Scaricate", font=("Segoe UI", 8, "bold"),
+                 bg=PANEL, fg=SUBTEXT).pack(anchor="w")
+        tk.Frame(right, height=1, bg=BORDER).pack(fill="x", pady=(2, 4))
+
+        sb = ttk.Scrollbar(right)
+        sb.pack(side="right", fill="y")
+        self._dl_done_listbox = tk.Listbox(
+            right, bg=PANEL, fg=TEXT, font=("Segoe UI", 8),
+            bd=0, highlightthickness=0, selectbackground=ACCENT,
+            yscrollcommand=sb.set
+        )
+        self._dl_done_listbox.pack(side="left", fill="both", expand=True)
+        sb.config(command=self._dl_done_listbox.yview)
+
+        # Barra progresso generale
+        bottom = tk.Frame(self.queue_panel, bg=PANEL)
+        bottom.pack(fill="x", padx=8, pady=(6, 8))
+        self._dl_general_var = tk.StringVar(value=f"0 / {total}")
+        tk.Label(bottom, textvariable=self._dl_general_var,
+                 font=("Segoe UI", 8), bg=PANEL, fg=SUBTEXT).pack(anchor="w")
+        self._dl_general_bar = ttk.Progressbar(
+            bottom, orient="horizontal", maximum=total,
             mode="determinate", style="Music.Horizontal.TProgressbar"
         )
-        self.progress_bar.pack(pady=4)
+        self._dl_general_bar.pack(fill="x", pady=2)
+
+        self._track_widgets = {}
+
+    def _track_started(self, item: dict, item_id: int):
+        """Crea la riga con barra di avanzamento nella colonna 'In download'."""
+        if self._dl_active_frame is None:
+            return
+        frame = tk.Frame(self._dl_active_frame, bg=PANEL)
+        frame.pack(fill="x", pady=2)
+        lbl = item["label"]
+        short = lbl[:20] + "…" if len(lbl) > 20 else lbl
+        tk.Label(frame, text=short, font=("Segoe UI", 8),
+                 bg=PANEL, fg=TEXT, anchor="w").pack(fill="x")
+        bar = ttk.Progressbar(frame, orient="horizontal", maximum=100,
+                               mode="determinate",
+                               style="Music.Horizontal.TProgressbar")
+        bar.pack(fill="x")
+        self._track_widgets[item_id] = (frame, bar)
+
+    def _update_track_progress(self, item_id: int, percent: float):
+        """Aggiorna la barra della traccia in corso."""
+        widgets = self._track_widgets.get(item_id)
+        if widgets:
+            widgets[1]["value"] = percent
+
+    def _track_completed(self, item: dict, item_id: int, ok: bool,
+                         completed: int, total: int):
+        """Sposta la traccia da 'In download' a 'Scaricate'."""
+        # Rimuovi dalla colonna attiva
+        widgets = self._track_widgets.pop(item_id, None)
+        if widgets:
+            widgets[0].destroy()
+
+        # Aggiungi a 'Scaricate'
+        if self._dl_done_listbox is not None:
+            lbl = item["label"]
+            short = lbl[:20] + "…" if len(lbl) > 20 else lbl
+            status = "✓" if ok else "✗"
+            self._dl_done_listbox.insert(tk.END, f"{status} {short}")
+            last = self._dl_done_listbox.size() - 1
+            self._dl_done_listbox.itemconfig(last, fg=SUCCESS if ok else ERROR)
+            self._dl_done_listbox.see(tk.END)
+
+        # Aggiorna barra generale
+        if self._dl_general_var is not None:
+            self._dl_general_var.set(f"{completed} / {total}")
+        if self._dl_general_bar is not None:
+            self._dl_general_bar["value"] = completed
+
+    def _restore_queue_panel(self):
+        """Ripristina il pannello coda normale dopo il download."""
+        for w in self.queue_panel.winfo_children():
+            w.destroy()
+        self._dl_active_frame  = None
+        self._dl_done_listbox  = None
+        self._dl_general_bar   = None
+        self._dl_general_var   = None
+        self._track_widgets    = {}
+        self._build_queue_panel()
 
     # ── Utilità navigazione ──────────────────────────────────
 
@@ -505,7 +643,7 @@ class MusicDownloaderApp:
         self.search_status.pack(pady=6)
 
         # Ricerche recenti
-        recenti = self.cache.get_recent_searches(10)
+        recenti = self.cache.get_recent_searches(RECENT_SEARCHES_SHOWN)
         if recenti:
             tk.Label(self.nav_frame, text="Ricerche recenti",
                      font=("Segoe UI", 9, "bold"), bg=BG, fg=SUBTEXT).pack(pady=(8, 2))
@@ -924,18 +1062,18 @@ class MusicDownloaderApp:
         destination = filedialog.askdirectory(title="Seleziona cartella di destinazione")
         if not destination:
             return
+        queue = list(self.download_queue)
         self.btn_download.config(state="disabled")
-        self.progress_bar["maximum"] = 100
-        self.progress_bar["value"] = 0
-        self.progress_outer.pack(fill="x", padx=10, pady=4)
+        self._show_download_panel(len(queue))
         threading.Thread(
             target=self._run_download,
-            args=(list(self.download_queue), destination),
+            args=(queue, destination),
+            kwargs={"clear_queue": True},
             daemon=True,
         ).start()
 
     def _get_genre(self, album_id: str) -> tuple:
-        """Restituisce (genre_str, nb_tracks) con cache."""
+        """Restituisce (genre_str, nb_tracks) con cache. Popola anche _cover_cache."""
         if not album_id:
             return "", 0
         if album_id in self._genre_cache:
@@ -944,8 +1082,10 @@ class MusicDownloaderApp:
             details = self.searcher.get_album_details(album_id)
             genre     = details.get("genre", "")
             nb_tracks = details.get("nb_tracks", 0)
+            cover_url = details.get("cover_xl", "")
             self._genre_cache[album_id]    = genre
             self._nb_tracks_cache[album_id] = nb_tracks
+            self._cover_cache[album_id]    = cover_url
             return genre, nb_tracks
         except Exception:
             return "", 0
@@ -954,6 +1094,7 @@ class MusicDownloaderApp:
     def _tag_file(filepath: str, meta: dict) -> None:
         if not filepath or not Path(filepath).exists():
             return
+        # Tag testuali
         try:
             try:
                 tags = EasyID3(filepath)
@@ -976,6 +1117,18 @@ class MusicDownloaderApp:
             tags.save()
         except Exception as e:
             print(f"[Tags] Errore su {filepath}: {e}", file=sys.stderr)
+        # Copertina album
+        cover_url = meta.get("cover_url", "")
+        if cover_url:
+            try:
+                tags2 = ID3(filepath)
+                with urllib.request.urlopen(cover_url, timeout=10) as resp:
+                    img_data = resp.read()
+                tags2.add(APIC(encoding=3, mime="image/jpeg", type=3,
+                               desc="Cover", data=img_data))
+                tags2.save()
+            except Exception as e:
+                print(f"[Tags] Errore artwork {filepath}: {e}", file=sys.stderr)
 
     def _download_single(self, item: dict, destination: str,
                          progress_cb=None, genre_info: tuple = None) -> tuple:
@@ -988,11 +1141,22 @@ class MusicDownloaderApp:
         if meta.get("tracknumber") and nb_tracks:
             meta["tracknumber"] = f"{meta['tracknumber']}/{nb_tracks}"
 
+        # Copertina dalla cache
+        album_id = meta.get("album_id", "")
+        if album_id and album_id in self._cover_cache:
+            meta["cover_url"] = self._cover_cache[album_id]
+
         title    = meta.get("title") or item["label"]
         artist   = meta.get("artist") or ""
-        filename = f"{artist} - {title}" if artist else title
+        raw_name = f"{artist} - {title}" if artist else title
+        filename = re.sub(r'[<>:"/\\|?*\n\r\t]', '_', raw_name).strip()[:FILENAME_MAX_LENGTH]
 
-        url = self.downloader.search_youtube(item["query"])
+        # Cache YouTube: evita di ricercare la stessa canzone più volte
+        query = item["query"]
+        if query not in self._youtube_cache:
+            self._youtube_cache[query] = self.downloader.search_youtube(query)
+        url = self._youtube_cache[query]
+
         if not url:
             return False, item["label"]
         filepath = self.downloader.download(url, destination, filename=filename,
@@ -1000,51 +1164,72 @@ class MusicDownloaderApp:
         self._tag_file(filepath, meta)
         return True, None
 
-    def _run_download(self, queue: list, destination: str):
-        successi, falliti = 0, []
-        for i, item in enumerate(queue):
-            self.root.after(0, self.progress_label.config,
-                            {"text": f"({i+1}/{len(queue)}) {item['label'][:34]}..."})
-            self.root.after(0, self._set_progress, 0)
+    def _run_download(self, queue: list, destination: str,
+                      genre_info: tuple = None, artist_name: str = None,
+                      clear_queue: bool = False):
+        """Download parallelo (max 3 contemporanei). Aggiorna il pannello download."""
+        total = len(queue)
+        lock  = threading.Lock()
+        state = {"successi": 0, "falliti": [], "completed": 0}
 
-            def callback(percent):
-                self.root.after(0, self._set_progress, percent)
+        def download_track(item):
+            item_id = id(item)
+            self.root.after(0, self._track_started, item, item_id)
+
+            def progress_cb(percent):
+                self.root.after(0, self._update_track_progress, item_id, percent)
 
             try:
-                ok, err = self._download_single(item, destination, progress_cb=callback)
-                if ok:
-                    successi += 1
-                    self.root.after(0, self._set_progress, 100)
-                else:
-                    falliti.append(err)
-                    self.root.after(0, self._set_progress, 0)
+                ok, err = self._download_single(item, destination, progress_cb, genre_info)
             except Exception as e:
-                falliti.append(f"{item['label']} ({str(e)[:40]})")
-                self.root.after(0, self._set_progress, 0)
+                ok, err = False, f"{item['label']} ({str(e)[:40]})"
 
-        self.root.after(0, self._download_done, successi, falliti, queue, destination)
+            with lock:
+                state["completed"] += 1
+                if ok:
+                    state["successi"] += 1
+                else:
+                    state["falliti"].append(err)
+                c = state["completed"]
 
-    def _set_progress(self, value):
-        self.progress_bar["value"] = value
+            self.root.after(0, self._track_completed, item, item_id, ok, c, total)
 
-    def _download_done(self, successi: int, falliti: list, queue: list, destination: str):
-        self.progress_outer.pack_forget()
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            list(pool.map(download_track, queue))
+
+        self.root.after(0, self._download_all_done,
+                        state["successi"], state["falliti"],
+                        queue, destination, artist_name, clear_queue)
+
+    def _download_all_done(self, successi: int, falliti: list, queue: list,
+                           destination: str, artist_name: str, clear_queue: bool):
+        self._restore_queue_panel()
         totale = len(queue)
 
-        # salva ogni traccia nella cronologia
-        for item in queue:
-            label   = item.get("label", item.get("query", ""))
-            artista = item.get("meta", {}).get("artist", "")
-            self.cache.add_download({
-                "type": "track",
-                "nome": label,
-                "artista": artista,
-                "destination": destination,
-                "successi": successi,
-                "totale": totale,
-            })
+        # Una sola entry per batch in cronologia
+        if len(queue) == 1:
+            entry_type = "track"
+            nome    = queue[0].get("label", queue[0].get("query", ""))
+            artista = queue[0].get("meta", {}).get("artist", "") or artist_name or ""
+        else:
+            entry_type = "album"
+            nome    = queue[0].get("meta", {}).get("album", "") or "Album"
+            artista = artist_name or queue[0].get("meta", {}).get("albumartist", "")
+
+        self.cache.add_download({
+            "type":        entry_type,
+            "nome":        nome,
+            "artista":     artista,
+            "destination": destination,
+            "successi":    successi,
+            "totale":      totale,
+        })
         self._refresh_history_menu()
-        self._clear_queue()
+
+        if clear_queue:
+            self._clear_queue()
+        else:
+            self._refresh_queue_ui()
 
         msg = f"Download completato!\n\nTotali: {totale}\nSuccessi: {successi}"
         if falliti:
@@ -1063,7 +1248,6 @@ class MusicDownloaderApp:
                 subprocess.run(["xdg-open", str(path)])
         except Exception:
             pass
-
 
     # ── Navigazione contestuale ──────────────────────────────
 
@@ -1074,7 +1258,13 @@ class MusicDownloaderApp:
     def _goto_album(self, artist_id, artist_name: str, album_id, album_name: str):
         self.current_artist = {"id": artist_id, "nome": artist_name}
         try:
-            anno = self.searcher.get_album_details(str(album_id)).get("anno", "")
+            details = self.searcher.get_album_details(str(album_id))
+            anno = details.get("anno", "")
+            # Metti in cache genre e copertina per non rifare la chiamata al download
+            aid = str(album_id)
+            self._genre_cache[aid]    = details.get("genre", "")
+            self._nb_tracks_cache[aid] = details.get("nb_tracks", 0)
+            self._cover_cache[aid]    = details.get("cover_xl", "")
         except Exception:
             anno = ""
         self._show_tracks({"id": album_id, "nome": album_name, "anno": anno})
@@ -1083,7 +1273,7 @@ class MusicDownloaderApp:
 
     @staticmethod
     def _safe_name(name: str) -> str:
-        return re.sub(r'[<>:"/\\|?*]', '_', name).strip()
+        return re.sub(r'[<>:"/\\|?*]', '_', name).strip()[:FILENAME_MAX_LENGTH]
 
     def _download_album_direct(self, album: dict):
         destination = filedialog.askdirectory(title="Seleziona cartella di destinazione")
@@ -1094,86 +1284,29 @@ class MusicDownloaderApp:
         except Exception as e:
             messagebox.showerror("Errore", f"Impossibile caricare le tracce: {e}")
             return
+
         album_folder = Path(destination) / self._safe_name(album["nome"])
         album_folder.mkdir(parents=True, exist_ok=True)
-        queue = []
-        for track in tracks:
-            queue.append({
+
+        queue = [
+            {
                 "query": self._make_query(track),
                 "label": track["nome"],
                 "meta":  self._make_meta(track, album),
-            })
-        self.btn_download.config(state="disabled")
-        self.progress_bar["maximum"] = 100
-        self.progress_bar["value"] = 0
-        self.progress_outer.pack(fill="x", padx=10, pady=4)
+            }
+            for track in tracks
+        ]
+
+        artist_name = self.current_artist["nome"] if self.current_artist else ""
+        genre_info  = self._get_genre(str(album.get("id", "")))
+
+        self._show_download_panel(len(queue))
         threading.Thread(
-            target=self._run_album_download,
-            args=(queue, str(album_folder), album),
+            target=self._run_download,
+            args=(queue, str(album_folder)),
+            kwargs={"genre_info": genre_info, "artist_name": artist_name, "clear_queue": False},
             daemon=True,
         ).start()
-
-    def _run_album_download(self, queue: list, destination: str, album: dict):
-        successi, falliti = 0, []
-        genre_info = self._get_genre(str(album.get("id", "")))
-
-        for i, item in enumerate(queue):
-            self.root.after(0, self.progress_label.config,
-                            {"text": f"({i+1}/{len(queue)}) {item['label'][:34]}..."})
-            self.root.after(0, self._set_progress, 0)
-
-            def callback(percent):
-                self.root.after(0, self._set_progress, percent)
-
-            try:
-                ok, err = self._download_single(item, destination,
-                                                progress_cb=callback, genre_info=genre_info)
-                if ok:
-                    successi += 1
-                    self.root.after(0, self._set_progress, 100)
-                else:
-                    falliti.append(err)
-                    self.root.after(0, self._set_progress, 0)
-            except Exception as e:
-                falliti.append(f"{item['label']} ({str(e)[:40]})")
-                self.root.after(0, self._set_progress, 0)
-
-        self.root.after(0, self._album_download_done,
-                        successi, falliti, len(queue), destination, album)
-
-    def _album_download_done(self, successi: int, falliti: list, totale: int,
-                             destination: str, album: dict):
-        self.progress_outer.pack_forget()
-        n = len(self.download_queue)
-        self.btn_download.config(state="normal" if n > 0 else "disabled")
-
-        artista = self.current_artist["nome"] if self.current_artist else ""
-        self.cache.add_download({
-            "type": "album",
-            "nome": album.get("nome", ""),
-            "artista": artista,
-            "destination": destination,
-            "successi": successi,
-            "totale": totale,
-        })
-        self._refresh_history_menu()
-
-        msg = f"Download completato!\n\nTotali: {totale}\nSuccessi: {successi}"
-        if falliti:
-            msg += f"\nFalliti: {len(falliti)}\n" + "\n".join(f"  - {f}" for f in falliti[:10])
-        messagebox.showinfo("Download completato", msg)
-        try:
-            path = Path(destination).resolve()
-            if sys.platform == "win32":
-                os.startfile(path)
-            elif sys.platform == "darwin":
-                import subprocess
-                subprocess.run(["open", str(path)])
-            else:
-                import subprocess
-                subprocess.run(["xdg-open", str(path)])
-        except Exception:
-            pass
 
 
 # ─────────────────────────────────────────────────────────────

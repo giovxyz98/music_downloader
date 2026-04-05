@@ -1,0 +1,27 @@
+Modifiche da fare:
+
+1. Aggiungere l'anno dopo il titolo, dentro le parentesi
+2. Ordinamento per nome (asc/desc) e per anno (asc/desc), label invariata
+3. Eliminare i 2 file .py separati, tutto in un unico file con struttura a classi (o equivalente pulito)
+4. Rinominare SpotifyClient con un nome generico (es. MusicSearcher o simile)
+5. Click destro su una canzone → "Vai all'album" e "Vai all'artista"
+6. Lista cantanti in ordine alfabetico
+7. Dalla lista album → click destro → "Vai all'artista" + "Scarica album" (selezione cartella, crea sottocartella con nome album, scarica tutte le canzoni as-is; la funzione doppio click per aggiungere alla coda rimane)
+8. Anche dopo doppio click sull'album → click destro → "Vai all'artista"
+9. All'avvio: controlla file di cache con ricerche recenti (album + canzoni); sezione "Cronologia download" nel menu a tendina in alto; se il file non esiste lo crea, altrimenti lo aggiorna
+10. Nella lista artisti: sostituire "fan" con info utili (n° album, n° canzoni inclusi singoli, + altre info disponibili da Deezer)
+11. Al momento del download, compilare i metadati del file audio (tag ID3/equivalente) con tutte le informazioni disponibili dall'API Deezer: Titolo, Artista partecipante, Artista album, Album, Anno, Numero traccia (#), Genere — tutti i campi visibili nelle Proprietà → Dettagli di Windows devono essere popolati ove il dato è disponibile tramite API.
+12. Ricerca YouTube intelligente: ytsearch5 + filtro parole chiave (karaoke, live, remix, lyric, cover, instrumental, acoustic, tribute, version)
+13. Timeout e retry su yt-dlp: socket_timeout=30, retries=3
+14. Progress bar cappata a 100% con min(percent, 100)
+15. Filename troncato a 180 caratteri per evitare errori su Windows
+16. Bug cronologia corretto: una sola entry per batch, non una per traccia
+17. _run_download e _run_album_download unificati in un unico metodo
+18. artist_name passato come parametro al momento dell'avvio download (non letto da self.current_artist a posteriori)
+19. _goto_album mette in cache genre, nb_tracks e cover_xl subito, senza rifar la chiamata al download
+20. Download paralleli con ThreadPoolExecutor(max_workers=3)
+21. Artwork album automatico: copertina Deezer (cover_xl) incorporata nei tag ID3 come APIC
+22. Cache risultati YouTube per sessione: evita ricerche duplicate della stessa canzone
+23. Nuova UI pannello download: colonna "In download" con barre dinamiche (max 3) + colonna "Scaricate" con icone ✓/✗ + barra progresso generale
+24. Costanti configurabili dichiarate in cima al file (MAX_WORKERS, PREFERRED_QUALITY, SOCKET_TIMEOUT, RETRIES, YOUTUBE_RESULTS, FILENAME_MAX_LENGTH, MAX_SEARCHES, MAX_HISTORY, HISTORY_MENU_MAX, RECENT_SEARCHES_SHOWN, DEEZER_ARTIST_LIMIT, DEEZER_TRACK_LIMIT) — tutti i valori hardcoded sostituiti con le rispettive costanti
+25. Filtro keyword YouTube ridotto alle sole parole chiaramente indesiderate: karaoke, instrumental, 8d, sped up — rimossi live, acoustic, version, remix, lyric, lyrics, cover, tribute che escludevano versioni ufficiali legittime
