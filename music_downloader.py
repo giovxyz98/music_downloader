@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC, ID3NoHeaderError
+from rapidfuzz import fuzz
 
 # ─────────────────────────────────────────────────────────────
 # Palette
@@ -53,6 +54,7 @@ class MusicSearcher:
     BASE = "https://api.deezer.com"
 
     def _get(self, url: str, params: Optional[Dict] = None) -> Dict:
+        time.sleep(0.1)
         for attempt in range(RETRIES):
             try:
                 r = requests.get(url, params=params, timeout=10)
@@ -89,12 +91,13 @@ class MusicSearcher:
         data = self._get(f"{self.BASE}/search/track", {"q": query, "limit": DEEZER_TRACK_LIMIT})
         return [
             {
-                "id": t["id"],
-                "nome": t["title"],
-                "artisti": [t["artist"]["name"]] if t.get("artist") else [],
+                "id":        t["id"],
+                "nome":      t["title"],
+                "artisti":   [t["artist"]["name"]] if t.get("artist") else [],
                 "artist_id": t["artist"]["id"] if t.get("artist") else None,
-                "album": t["album"]["title"] if t.get("album") else "",
-                "album_id": t["album"]["id"] if t.get("album") else None,
+                "album":     t["album"]["title"] if t.get("album") else "",
+                "album_id":  t["album"]["id"] if t.get("album") else None,
+                "duration":  t.get("duration", 0),
             }
             for t in data.get("data", []) if t.get("id")
         ]
@@ -121,10 +124,11 @@ class MusicSearcher:
         data = self._get(f"{self.BASE}/album/{album_id}/tracks")
         return [
             {
-                "id": track["id"],
-                "nome": track["title"],
-                "artisti": [track["artist"]["name"]] if track.get("artist") else [],
-                "numero": track.get("track_position", 0),
+                "id":       track["id"],
+                "nome":     track["title"],
+                "artisti":  [track["artist"]["name"]] if track.get("artist") else [],
+                "numero":   track.get("track_position", 0),
+                "duration": track.get("duration", 0),
             }
             for track in data.get("data", [])
         ]
@@ -147,24 +151,64 @@ class MusicSearcher:
 # ─────────────────────────────────────────────────────────────
 class AudioDownloader:
 
-    _SKIP_KEYWORDS = {"karaoke", "instrumental", "8d", "sped up"}
+    _BAD_KEYWORDS      = {"live", "karaoke", "instrumental", "remix", "cover",
+                          "sped up", "slowed", "8d", "nightcore"}
+    _OFFICIAL_KEYWORDS = {"official video", "official audio"}
 
     @staticmethod
-    def search_youtube(query: str) -> Optional[str]:
+    def _normalize(s: str) -> str:
+        import unicodedata
+        s = unicodedata.normalize("NFKD", s)
+        s = s.encode("ascii", "ignore").decode()
+        s = s.lower()
+        s = re.sub(r"[^\w\s]", " ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    @staticmethod
+    def _score(entry: dict, artist: str, title: str, duration: int) -> int:
+        v     = AudioDownloader._normalize(entry.get("title", ""))
+        ch    = AudioDownloader._normalize(entry.get("uploader", "") or entry.get("channel", ""))
+        dur   = entry.get("duration") or 0
+        art_n = AudioDownloader._normalize(artist)
+        tit_n = AudioDownloader._normalize(title)
+
+        score = 0
+        if art_n and art_n in v:  score += 25
+        if tit_n and tit_n in v:  score += 30
+        if art_n and art_n in ch: score += 15
+        if "topic" in ch:         score += 25
+        for k in AudioDownloader._OFFICIAL_KEYWORDS:
+            if k in v: score += 10
+        for k in AudioDownloader._BAD_KEYWORDS:
+            if k in v: score -= 25
+        if dur and duration:
+            diff = abs(dur - duration)
+            if   diff <  5: score += 20
+            elif diff < 15: score += 10
+            elif diff > 60: score -= 20
+        if tit_n:
+            score += int(fuzz.partial_ratio(tit_n, v) * 0.3)
+        return score
+
+    @staticmethod
+    def search_youtube(query: str, artist: str = "", title: str = "",
+                       duration: int = 0) -> List[str]:
         try:
             with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as ydl:
-                results = ydl.extract_info(f"ytsearch5:{query}", download=False)
+                results = ydl.extract_info(f"ytsearch{YOUTUBE_RESULTS}:{query}", download=False)
             entries = [e for e in (results.get("entries") or []) if e]
-            for entry in entries:
-                title = entry.get("title", "").lower()
-                if not any(kw in title for kw in AudioDownloader._SKIP_KEYWORDS):
-                    return entry["url"]
-            # fallback: primo risultato se tutti filtrati
-            if entries:
-                return entries[0]["url"]
+            if not entries:
+                return []
+            scored = sorted(
+                entries,
+                key=lambda e: AudioDownloader._score(e, artist, title, duration),
+                reverse=True,
+            )
+            return [e["url"] for e in scored]
         except Exception as e:
             print(f"[AudioDownloader] Errore ricerca '{query}': {e}", file=sys.stderr)
-        return None
+        return []
 
     @staticmethod
     def download(url: str, destination: str, filename: str = None,
@@ -210,7 +254,8 @@ class CacheManager:
     CACHE_FILE = Path(__file__).parent / "music_cache.json"
 
     def __init__(self):
-        self.data = {"recent_searches": [], "download_history": []}
+        self._save_lock = threading.Lock()
+        self.data = {"recent_searches": [], "download_history": [], "youtube_cache": {}}
         self._load()
 
     def _load(self):
@@ -220,15 +265,17 @@ class CacheManager:
                     loaded = json.load(f)
                 self.data["recent_searches"]  = loaded.get("recent_searches", [])
                 self.data["download_history"] = loaded.get("download_history", [])
+                self.data["youtube_cache"]    = loaded.get("youtube_cache", {})
             except Exception as e:
                 print(f"[Cache] Errore lettura: {e}", file=sys.stderr)
 
     def save(self):
-        try:
-            with open(self.CACHE_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"[Cache] Errore salvataggio: {e}", file=sys.stderr)
+        with self._save_lock:
+            try:
+                with open(self.CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(self.data, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[Cache] Errore salvataggio: {e}", file=sys.stderr)
 
     def add_search(self, type_: str, query: str):
         self.data["recent_searches"] = [
@@ -259,6 +306,17 @@ class CacheManager:
 
     def clear_history(self):
         self.data["download_history"] = []
+        self.save()
+
+    def get_youtube_urls(self, query: str) -> List[str]:
+        return self.data["youtube_cache"].get(query, [])
+
+    def set_youtube_urls(self, query: str, urls: List[str]):
+        self.data["youtube_cache"][query] = urls
+        if len(self.data["youtube_cache"]) > MAX_SEARCHES:
+            keys = list(self.data["youtube_cache"].keys())
+            for k in keys[:-MAX_SEARCHES]:
+                del self.data["youtube_cache"][k]
         self.save()
 
 
@@ -310,7 +368,6 @@ class MusicDownloaderApp:
         self._genre_cache:     dict = {}   # album_id → genre str
         self._nb_tracks_cache: dict = {}   # album_id → int
         self._cover_cache:     dict = {}   # album_id → cover_xl url
-        self._youtube_cache:   dict = {}   # query → youtube url
 
         # Widget del pannello download (impostati durante il download)
         self._dl_active_frame: tk.Frame        = None
@@ -766,6 +823,7 @@ class MusicDownloaderApp:
                 "year":        "",
                 "tracknumber": "",
                 "album_id":    str(t["album_id"]) if t.get("album_id") else "",
+                "duration":    t.get("duration", 0),
             }
             self._add_to_queue(query, label, meta)
 
@@ -1019,6 +1077,7 @@ class MusicDownloaderApp:
             "year":        album.get("anno", ""),
             "tracknumber": str(track["numero"]) if track.get("numero") else "",
             "album_id":    str(album.get("id", "")),
+            "duration":    track.get("duration", 0),
         }
 
     def _add_all_tracks(self, album: dict):
@@ -1148,11 +1207,22 @@ class MusicDownloaderApp:
             meta["cover_url"] = self._cover_cache[album_id]
         return meta
 
-    def _resolve_url(self, query: str) -> Optional[str]:
-        """Restituisce l'URL YouTube per la query, usando la cache di sessione."""
-        if query not in self._youtube_cache:
-            self._youtube_cache[query] = self.downloader.search_youtube(query)
-        return self._youtube_cache[query]
+    def _resolve_url(self, item: dict) -> List[str]:
+        """Restituisce la lista di URL YouTube ordinati per score, con cache persistente."""
+        query = item["query"]
+        cached = self.cache.get_youtube_urls(query)
+        if cached:
+            return cached
+        meta = item.get("meta") or {}
+        urls = self.downloader.search_youtube(
+            query,
+            artist   = meta.get("artist", ""),
+            title    = meta.get("title", ""),
+            duration = meta.get("duration", 0),
+        )
+        if urls:
+            self.cache.set_youtube_urls(query, urls)
+        return urls
 
     def _download_single(self, item: dict, destination: str,
                          progress_cb=None, genre_info: tuple = None) -> tuple:
@@ -1163,19 +1233,35 @@ class MusicDownloaderApp:
         raw_name = f"{artist} - {title}" if artist else title
         filename = re.sub(r'[<>:"/\\|?*\n\r\t]', '_', raw_name).strip()[:FILENAME_MAX_LENGTH]
 
-        url = self._resolve_url(item["query"])
-        if not url:
+        if Path(destination, f"{filename}.mp3").exists():
+            return True, None
+
+        urls = self._resolve_url(item)
+        if not urls:
             return False, item["label"]
 
-        filepath = self.downloader.download(url, destination, filename=filename,
-                                            progress_callback=progress_cb)
-        self._tag_file(filepath, meta)
-        return True, None
+        for url in urls:
+            try:
+                filepath = self.downloader.download(url, destination, filename=filename,
+                                                    progress_callback=progress_cb)
+                self._tag_file(filepath, meta)
+                return True, None
+            except Exception:
+                continue
+        return False, item["label"]
 
     def _run_download(self, queue: list, destination: str,
                       genre_info: tuple = None, artist_name: str = None,
                       clear_queue: bool = False):
         """Download parallelo (max 3 contemporanei). Aggiorna il pannello download."""
+        if genre_info is None:
+            seen: set = set()
+            for item in queue:
+                aid = (item.get("meta") or {}).get("album_id", "")
+                if aid and aid not in seen:
+                    seen.add(aid)
+                    self._get_genre(aid)
+
         total = len(queue)
         lock  = threading.Lock()
         state = {"successi": 0, "falliti": [], "completed": 0}

@@ -29,3 +29,11 @@ Modifiche da fare:
 27. Ordinamento album per anno corretto: year_key() converte l'anno in int con fallback a 0 per valori "N/A" o non numerici, evitando ordinamenti stringa errati
 28. Rimosse costanti inutilizzate YOUTUBE_RESULTS_TIMED e DURATION_TOLERANCE (suggerivano una feature di matching durata mai implementata)
 29. _download_single spezzato in tre passaggi distinti: _prepare_meta (arricchisce il dizionario meta con genere, tracknumber e cover), _resolve_url (lookup YouTube con cache di sessione), _download_single (orchestratore: chiama i due helper, poi scarica e tagga)
+30. Sistema di scoring YouTube: sostituito il filtro passivo (_SKIP_KEYWORDS) con ranking completo — normalize() rimuove accenti/punteggiatura, _score() assegna bonus/penalità su match artista (+25), match titolo (+30), canale Topic (+25), canale artista (+15), keyword ufficiali (+10 ciascuna), parole indesiderate (-25 ciascuna), durata simile alla traccia Deezer (+20/<5s, +10/<15s, -20/>60s), fuzzy matching con rapidfuzz (partial_ratio * 0.3)
+31. Retry YouTube: _download_single itera sull'intera lista di URL ordinati per score — se il primo fallisce prova il secondo e così via fino all'esaurimento dei candidati
+32. Skip se file esiste: _download_single controlla se il file .mp3 è già presente prima di scaricare; in caso positivo segna la traccia come riuscita senza riscaricare
+33. Cache YouTube persistente: _youtube_cache rimossa da MusicDownloaderApp e spostata in CacheManager (chiave "youtube_cache" nel JSON); get_youtube_urls/set_youtube_urls con trim automatico a MAX_SEARCHES voci; file write protetto da threading.Lock
+34. Pre-fetch metadata album in _run_download: tutti gli album_id unici della coda vengono passati a _get_genre prima dell'avvio del ThreadPoolExecutor, eliminando race condition tra i 3 thread paralleli che accedevano alla stessa chiave di cache
+35. Aggiunto campo "duration" ai dizionari traccia in get_album_tracks() e search_track(); propagato nei meta tramite _make_meta() e nel handler on_dclick della ricerca canzone
+36. Rate limit Deezer: aggiunto time.sleep(0.1) all'inizio di MusicSearcher._get() per ridurre il rischio di blocchi su ricerche rapide in successione
+37. Aggiunta dipendenza rapidfuzz==3.12.2 in requirements.txt
