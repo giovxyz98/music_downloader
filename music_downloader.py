@@ -610,49 +610,66 @@ class MusicDownloaderApp:
 
     # ── Pannello download ────────────────────────────────────
 
-    def _show_download_panel(self, total: int):
-        """Sostituisce il contenuto del queue_panel con l'UI di download."""
+    def _show_download_panel(self, queue: list):
+        """Sostituisce il contenuto del queue_panel con la lista completa delle tracce."""
+        total = len(queue)
         for w in self.queue_panel.winfo_children():
             w.destroy()
 
         tk.Label(self.queue_panel, text="Download in corso",
-                 font=("Segoe UI", 11, "bold"), bg=PANEL, fg=TEXT).pack(pady=(12, 6))
+                 font=("Segoe UI", 11, "bold"), bg=PANEL, fg=TEXT).pack(pady=(12, 2))
 
-        cols_frame = tk.Frame(self.queue_panel, bg=PANEL)
-        cols_frame.pack(fill="both", expand=True, padx=8)
-
-        # Colonna sinistra: "In download"
-        left = tk.Frame(cols_frame, bg=PANEL)
-        left.pack(side="left", fill="both", expand=True, padx=(0, 4))
-        tk.Label(left, text="In download", font=("Segoe UI", 8, "bold"),
-                 bg=PANEL, fg=SUBTEXT).pack(anchor="w")
-        tk.Frame(left, height=1, bg=BORDER).pack(fill="x", pady=(2, 4))
-        self._dl_active_frame = tk.Frame(left, bg=PANEL)
-        self._dl_active_frame.pack(fill="x")
-
-        # Colonna destra: "Scaricate"
-        right = tk.Frame(cols_frame, bg=PANEL)
-        right.pack(side="right", fill="both", expand=True, padx=(4, 0))
-        tk.Label(right, text="Scaricate", font=("Segoe UI", 8, "bold"),
-                 bg=PANEL, fg=SUBTEXT).pack(anchor="w")
-        tk.Frame(right, height=1, bg=BORDER).pack(fill="x", pady=(2, 4))
-
-        sb = ttk.Scrollbar(right)
-        sb.pack(side="right", fill="y")
-        self._dl_done_listbox = tk.Listbox(
-            right, bg=PANEL, fg=TEXT, font=("Segoe UI", 8),
-            bd=0, highlightthickness=0, selectbackground=ACCENT,
-            yscrollcommand=sb.set
-        )
-        self._dl_done_listbox.pack(side="left", fill="both", expand=True)
-        sb.config(command=self._dl_done_listbox.yview)
-
-        # Barra progresso generale
-        bottom = tk.Frame(self.queue_panel, bg=PANEL)
-        bottom.pack(fill="x", padx=8, pady=(6, 4))
         self._dl_general_var = tk.StringVar(value=f"0 / {total}")
-        tk.Label(bottom, textvariable=self._dl_general_var,
-                 font=("Segoe UI", 8), bg=PANEL, fg=SUBTEXT).pack(anchor="w")
+        tk.Label(self.queue_panel, textvariable=self._dl_general_var,
+                 font=("Segoe UI", 8), bg=PANEL, fg=SUBTEXT).pack()
+
+        # Lista scorrevole con tutte le tracce pre-popolate
+        list_frame = tk.Frame(self.queue_panel, bg=PANEL)
+        list_frame.pack(fill="both", expand=True, padx=6, pady=(6, 4))
+
+        canvas = tk.Canvas(list_frame, bg=PANEL, highlightthickness=0)
+        sb = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg=PANEL)
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas_win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.bind("<Configure>",
+                    lambda e, cw=canvas_win: canvas.itemconfig(cw, width=e.width))
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        def _on_wheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_wheel)
+        self._dl_mousewheel_cb = _on_wheel  # salvato per unbind
+
+        self._track_widgets = {}
+        for item in queue:
+            item_id = id(item)
+            row = tk.Frame(inner, bg=PANEL)
+            row.pack(fill="x", pady=1, padx=2)
+
+            status_var = tk.StringVar(value="○")
+            tk.Label(row, textvariable=status_var, font=("Segoe UI", 9),
+                     bg=PANEL, fg=SUBTEXT, width=2, anchor="center").pack(side="left")
+
+            lbl = item["label"]
+            short = lbl[:24] + "…" if len(lbl) > 24 else lbl
+            tk.Label(row, text=short, font=("Segoe UI", 8),
+                     bg=PANEL, fg=TEXT, anchor="w").pack(
+                         side="left", fill="x", expand=True, padx=(2, 4))
+
+            bar = ttk.Progressbar(row, orient="horizontal", maximum=100,
+                                   mode="determinate",
+                                   style="Music.Horizontal.TProgressbar", length=55)
+            bar.pack(side="right")
+
+            self._track_widgets[item_id] = (bar, status_var)
+
+        # Barra progresso generale + annulla
+        bottom = tk.Frame(self.queue_panel, bg=PANEL)
+        bottom.pack(fill="x", padx=8, pady=(4, 4))
         self._dl_general_bar = ttk.Progressbar(
             bottom, orient="horizontal", maximum=total,
             mode="determinate", style="Music.Horizontal.TProgressbar"
@@ -663,49 +680,30 @@ class MusicDownloaderApp:
                    command=self._cancel_event.set,
                    style="Ghost.TButton").pack(fill="x", padx=8, pady=(2, 8))
 
-        self._track_widgets = {}
+        self._dl_active_frame = None
+        self._dl_done_listbox = None
 
     def _track_started(self, item: dict, item_id: int):
-        """Crea la riga con barra di avanzamento nella colonna 'In download'."""
-        if self._dl_active_frame is None:
-            return
-        frame = tk.Frame(self._dl_active_frame, bg=PANEL)
-        frame.pack(fill="x", pady=2)
-        lbl = item["label"]
-        short = lbl[:20] + "…" if len(lbl) > 20 else lbl
-        tk.Label(frame, text=short, font=("Segoe UI", 8),
-                 bg=PANEL, fg=TEXT, anchor="w").pack(fill="x")
-        bar = ttk.Progressbar(frame, orient="horizontal", maximum=100,
-                               mode="determinate",
-                               style="Music.Horizontal.TProgressbar")
-        bar.pack(fill="x")
-        self._track_widgets[item_id] = (frame, bar)
+        """Marca la traccia come attiva (▶) nella lista pre-popolata."""
+        widgets = self._track_widgets.get(item_id)
+        if widgets:
+            widgets[1].set("▶")
 
     def _update_track_progress(self, item_id: int, percent: float):
         """Aggiorna la barra della traccia in corso."""
         widgets = self._track_widgets.get(item_id)
         if widgets:
-            widgets[1]["value"] = percent
+            widgets[0]["value"] = percent
 
     def _track_completed(self, item: dict, item_id: int, ok: bool,
                          completed: int, total: int):
-        """Sposta la traccia da 'In download' a 'Scaricate'."""
-        # Rimuovi dalla colonna attiva
-        widgets = self._track_widgets.pop(item_id, None)
+        """Aggiorna icona e barra al completamento della traccia."""
+        widgets = self._track_widgets.get(item_id)
         if widgets:
-            widgets[0].destroy()
+            bar, status_var = widgets
+            bar["value"] = 100 if ok else 0
+            status_var.set("✓" if ok else "✗")
 
-        # Aggiungi a 'Scaricate'
-        if self._dl_done_listbox is not None:
-            lbl = item["label"]
-            short = lbl[:20] + "…" if len(lbl) > 20 else lbl
-            status = "✓" if ok else "✗"
-            self._dl_done_listbox.insert(tk.END, f"{status} {short}")
-            last = self._dl_done_listbox.size() - 1
-            self._dl_done_listbox.itemconfig(last, fg=SUCCESS if ok else ERROR)
-            self._dl_done_listbox.see(tk.END)
-
-        # Aggiorna barra generale
         if self._dl_general_var is not None:
             self._dl_general_var.set(f"{completed} / {total}")
         if self._dl_general_bar is not None:
@@ -713,6 +711,12 @@ class MusicDownloaderApp:
 
     def _restore_queue_panel(self):
         """Ripristina il pannello coda normale dopo il download."""
+        if hasattr(self, "_dl_mousewheel_cb") and self._dl_mousewheel_cb:
+            try:
+                self.queue_panel.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
+            self._dl_mousewheel_cb = None
         for w in self.queue_panel.winfo_children():
             w.destroy()
         self._dl_active_frame  = None
@@ -1222,7 +1226,7 @@ class MusicDownloaderApp:
         queue = list(self.download_queue)
         self._cancel_event.clear()
         self.btn_download.config(state="disabled")
-        self._show_download_panel(len(queue))
+        self._show_download_panel(queue)
         threading.Thread(
             target=self._run_download,
             args=(queue, destination),
@@ -1361,24 +1365,27 @@ class MusicDownloaderApp:
         ready: Queue = Queue()  # produce (item, urls) oppure None come sentinel
 
         def resolver():
+            # Pre-fetcha i generi per album (veloce, una sola chiamata per album)
+            # poi riversa tutti gli item nella queue subito — i worker partono in parallelo
+            seen: set = set()
+            for item in queue:
+                if genre_info is None:
+                    aid = (item.get("meta") or {}).get("album_id", "")
+                    if aid and aid not in seen:
+                        seen.add(aid)
+                        self._get_genre(aid)
             for item in queue:
                 if self._cancel_event.is_set():
                     break
-                if genre_info is None:
-                    aid = (item.get("meta") or {}).get("album_id", "")
-                    if aid:
-                        self._get_genre(aid)
-                urls = self._resolve_url(item)
-                ready.put((item, urls))
+                ready.put(item)
             for _ in range(MAX_WORKERS):
                 ready.put(None)
 
         def worker():
             while True:
-                task = ready.get()
-                if task is None:
+                item = ready.get()
+                if item is None:
                     break
-                item, urls = task
                 item_id = id(item)
 
                 if self._cancel_event.is_set():
@@ -1395,8 +1402,8 @@ class MusicDownloaderApp:
                     self.root.after(0, self._update_track_progress, _id, percent)
 
                 try:
-                    ok, err = self._download_single(item, destination, progress_cb,
-                                                    genre_info, urls=urls)
+                    # URL resolution + download avvengono qui, in parallelo tra i worker
+                    ok, err = self._download_single(item, destination, progress_cb, genre_info)
                 except Exception as e:
                     ok, err = False, f"{item['label']} ({str(e)[:40]})"
 
@@ -1527,7 +1534,7 @@ class MusicDownloaderApp:
 
         artist_name = self.current_artist["nome"] if self.current_artist else ""
         self._cancel_event.clear()
-        self._show_download_panel(len(queue))
+        self._show_download_panel(queue)
         threading.Thread(
             target=self._run_download,
             args=(queue, destination),
@@ -1561,7 +1568,7 @@ class MusicDownloaderApp:
         genre_info  = self._get_genre(str(album.get("id", "")))
 
         self._cancel_event.clear()
-        self._show_download_panel(len(queue))
+        self._show_download_panel(queue)
         threading.Thread(
             target=self._run_download,
             args=(queue, str(album_folder)),
