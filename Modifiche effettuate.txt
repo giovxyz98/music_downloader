@@ -25,3 +25,7 @@ Modifiche da fare:
 23. Nuova UI pannello download: colonna "In download" con barre dinamiche (max 3) + colonna "Scaricate" con icone ✓/✗ + barra progresso generale
 24. Costanti configurabili dichiarate in cima al file (MAX_WORKERS, PREFERRED_QUALITY, SOCKET_TIMEOUT, RETRIES, YOUTUBE_RESULTS, FILENAME_MAX_LENGTH, MAX_SEARCHES, MAX_HISTORY, HISTORY_MENU_MAX, RECENT_SEARCHES_SHOWN, DEEZER_ARTIST_LIMIT, DEEZER_TRACK_LIMIT) — tutti i valori hardcoded sostituiti con le rispettive costanti
 25. Filtro keyword YouTube ridotto alle sole parole chiaramente indesiderate: karaoke, instrumental, 8d, sped up — rimossi live, acoustic, version, remix, lyric, lyrics, cover, tribute che escludevano versioni ufficiali legittime
+26. Rimozione tag APIC esistenti prima di aggiungere la copertina: tags2.delall("APIC") evita copertine duplicate nei metadata ID3
+27. Ordinamento album per anno corretto: year_key() converte l'anno in int con fallback a 0 per valori "N/A" o non numerici, evitando ordinamenti stringa errati
+28. Rimosse costanti inutilizzate YOUTUBE_RESULTS_TIMED e DURATION_TOLERANCE (suggerivano una feature di matching durata mai implementata)
+29. _download_single spezzato in tre passaggi distinti: _prepare_meta (arricchisce il dizionario meta con genere, tracknumber e cover), _resolve_url (lookup YouTube con cache di sessione), _download_single (orchestratore: chiama i due helper, poi scarica e tagga)

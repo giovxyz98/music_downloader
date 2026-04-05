@@ -1,6 +1,3 @@
-1. Rimuovere i tag APIC esistenti prima di aggiungere una nuova copertina, per evitare copertine duplicate nei metadata ID3.
+Eccezioni custom per MusicSearcher._get — al posto di RuntimeError generico, usare DeezerApiError, NetworkError ecc.
+Dataclass/TypedDict per il dizionario meta — rendere esplicito il contratto che _tag_file si aspetta, invece di dipendere da chiavi implicite
 
-2. Ordinamento album per anno — se l'anno è "N/A" o non numerico l'ordinamento stringa dà risultati sbagliati. Convertire in numero con fallback (es. 0 o 9999).
-
-3. Matching durata traccia — confrontare la durata Deezer con quella del video YouTube e accettare solo risultati con differenza < 5 secondi. Richiede extract_flat=False nella ricerca YouTube (più lento ma matching molto più accurato).
-*Un'unica nota sulla 3: con extract_flat=False e ytsearch5, yt-dlp deve estrarre i metadati completi di 5 video per ogni traccia. Su un album da 15 tracce sono 75 estrazioni prima ancora di iniziare a scaricare. Potresti valutare di ridurre a ytsearch3 quando hai la durata Deezer disponibile, perché il matching per durata compensa la riduzione di candidati.

@@ -37,9 +37,7 @@ MAX_WORKERS           = 3      # download paralleli contemporanei
 PREFERRED_QUALITY     = "320"  # qualità mp3 in kbps
 SOCKET_TIMEOUT        = 30     # timeout connessione yt-dlp (secondi)
 RETRIES               = 3      # tentativi yt-dlp + MusicSearcher
-YOUTUBE_RESULTS       = 5      # risultati YouTube da valutare (senza durata Deezer)
-YOUTUBE_RESULTS_TIMED = 3      # risultati YouTube con matching durata
-DURATION_TOLERANCE    = 5      # secondi tolleranza matching durata YouTube
+YOUTUBE_RESULTS       = 5      # risultati YouTube da valutare
 FILENAME_MAX_LENGTH   = 180    # limite caratteri nome file
 MAX_SEARCHES          = 50     # ricerche recenti salvate in cache
 MAX_HISTORY           = 500    # download in cronologia
@@ -891,11 +889,16 @@ class MusicDownloaderApp:
         filter_var, sort_var = self._build_filter_sort_controls(self.nav_frame)
 
         def sorted_albums(albums):
+            def year_key(a):
+                try:
+                    return int(a["anno"])
+                except (ValueError, TypeError):
+                    return 0
             mode = sort_var.get()
             if mode == "Nome A→Z": return sorted(albums, key=lambda a: a["nome"].lower())
             if mode == "Nome Z→A": return sorted(albums, key=lambda a: a["nome"].lower(), reverse=True)
-            if mode == "Anno ↑":   return sorted(albums, key=lambda a: a["anno"])
-            if mode == "Anno ↓":   return sorted(albums, key=lambda a: a["anno"], reverse=True)
+            if mode == "Anno ↑":   return sorted(albums, key=year_key)
+            if mode == "Anno ↓":   return sorted(albums, key=year_key, reverse=True)
             return albums
 
         def refresh_list(*_):
@@ -1122,6 +1125,7 @@ class MusicDownloaderApp:
         if cover_url:
             try:
                 tags2 = ID3(filepath)
+                tags2.delall("APIC")
                 with urllib.request.urlopen(cover_url, timeout=10) as resp:
                     img_data = resp.read()
                 tags2.add(APIC(encoding=3, mime="image/jpeg", type=3,
@@ -1130,9 +1134,8 @@ class MusicDownloaderApp:
             except Exception as e:
                 print(f"[Tags] Errore artwork {filepath}: {e}", file=sys.stderr)
 
-    def _download_single(self, item: dict, destination: str,
-                         progress_cb=None, genre_info: tuple = None) -> tuple:
-        """Scarica e tagga una traccia. Restituisce (ok: bool, err_label: str|None)."""
+    def _prepare_meta(self, item: dict, genre_info: tuple = None) -> dict:
+        """Arricchisce il dizionario meta con genere, tracknumber completo e cover."""
         meta             = dict(item.get("meta") or {})
         genre, nb_tracks = genre_info if genre_info is not None \
                            else self._get_genre(meta.get("album_id", ""))
@@ -1140,25 +1143,30 @@ class MusicDownloaderApp:
             meta["genre"] = genre
         if meta.get("tracknumber") and nb_tracks:
             meta["tracknumber"] = f"{meta['tracknumber']}/{nb_tracks}"
-
-        # Copertina dalla cache
         album_id = meta.get("album_id", "")
         if album_id and album_id in self._cover_cache:
             meta["cover_url"] = self._cover_cache[album_id]
+        return meta
 
+    def _resolve_url(self, query: str) -> Optional[str]:
+        """Restituisce l'URL YouTube per la query, usando la cache di sessione."""
+        if query not in self._youtube_cache:
+            self._youtube_cache[query] = self.downloader.search_youtube(query)
+        return self._youtube_cache[query]
+
+    def _download_single(self, item: dict, destination: str,
+                         progress_cb=None, genre_info: tuple = None) -> tuple:
+        """Scarica e tagga una traccia. Restituisce (ok: bool, err_label: str|None)."""
+        meta     = self._prepare_meta(item, genre_info)
         title    = meta.get("title") or item["label"]
         artist   = meta.get("artist") or ""
         raw_name = f"{artist} - {title}" if artist else title
         filename = re.sub(r'[<>:"/\\|?*\n\r\t]', '_', raw_name).strip()[:FILENAME_MAX_LENGTH]
 
-        # Cache YouTube: evita di ricercare la stessa canzone più volte
-        query = item["query"]
-        if query not in self._youtube_cache:
-            self._youtube_cache[query] = self.downloader.search_youtube(query)
-        url = self._youtube_cache[query]
-
+        url = self._resolve_url(item["query"])
         if not url:
             return False, item["label"]
+
         filepath = self.downloader.download(url, destination, filename=filename,
                                             progress_callback=progress_cb)
         self._tag_file(filepath, meta)
