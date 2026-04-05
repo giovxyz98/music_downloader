@@ -1,38 +1,335 @@
-════════════════════════════════════════════════════════════
-SEZIONE PACKAGING — DA FARE SOLO ALLA FINE DEGLI SVILUPPI
-════════════════════════════════════════════════════════════
+DOCUMENTO DI REVISIONE ARCHITETTURALE
+Progetto: Music Downloader (Python + Tkinter + yt-dlp)
 
-A. Ottimizzazione import → from X import Y
+Questo documento raccoglie in modo completo e organizzato tutte le migliorie individuate durante la revisione del progetto. Le osservazioni includono sia quelle proposte dal revisore originale sia ulteriori miglioramenti architetturali individuati successivamente. L'obiettivo è trasformare il progetto da semplice applicazione funzionante a software più robusto, stabile, manutenibile e distribuibile.
 
-  Attualmente il file usa import interi (es. import re,
-  import json, import threading). PyInstaller include
-  l'intero modulo anche se ne usi solo una funzione,
-  gonfiando l'exe inutilmente.
+Le migliorie sono ordinate per area tecnica.
 
-  Soluzione: sostituire tutti gli import con from X import Y
-  in modo da includere solo ciò che viene effettivamente usato.
+────────────────────────────────────────────────────────
 
-  Esempi:
-    import re                    →  from re import sub, compile
-    import os                    →  from os import startfile, makedirs
-    import json                  →  from json import load, dump
-    import threading             →  from threading import Thread, Lock
-    import urllib.request        →  from urllib.request import urlopen
-    from pathlib import Path     →  invariato (già corretto)
-    from concurrent.futures ...  →  invariato (già corretto)
+SEZIONE 1 — GESTIONE THREAD E REATTIVITÀ DELLA UI
 
-  Da fare prima di eseguire PyInstaller, non prima.
-  Non cambia il comportamento del programma.
+1.1 Spostare tutte le chiamate di rete fuori dal main thread
 
-B. Packaging dell'app → MusicDownloader.exe
+Attualmente alcune operazioni che eseguono richieste HTTP verso l'API Deezer vengono eseguite direttamente nel thread principale di Tkinter. Questo comporta un blocco dell'interfaccia utente durante l'attesa della risposta della rete. Se la connessione è lenta o il server impiega tempo a rispondere, la finestra smette temporaneamente di rispondere agli eventi e su Windows può comparire lo stato "Non risponde".
 
-Questo progetto è perfetto per diventare app desktop reale.
+Le operazioni coinvolte includono tipicamente:
 
-Serve solo pyinstaller per creare MusicDownloader.exe.
-Molti utenti non installano Python.
+- ricerca artista
+- caricamento album
+- caricamento tracce
+- caricamento dettagli album
 
-Attenzione: yt-dlp e ffmpeg richiedono gestione speciale
-in PyInstaller (binari aggiuntivi, hook). Non è banale su
-Windows. Usare --onefile --windowed e includere ffmpeg.exe
-nella cartella.
-RISCHIO: alto se fatto senza esperienza con PyInstaller.
+Queste chiamate devono essere spostate in thread separati, utilizzando lo stesso approccio già adottato per i download (thread dedicati o ThreadPoolExecutor). L'interfaccia deve essere aggiornata tramite meccanismi thread-safe come root.after().
+
+Benefici:
+- UI sempre reattiva
+- migliore esperienza utente
+- eliminazione dei freeze dell'interfaccia
+
+Priorità: molto alta.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 2 — GESTIONE DOWNLOAD
+
+2.1 Sistema di cancellazione download
+
+Attualmente una volta avviato il comando "Scarica tutto", i download proseguono fino al completamento senza possibilità di interruzione. Questo crea una situazione in cui l'utente non ha controllo sull'operazione.
+
+È opportuno implementare:
+
+- cancellazione del singolo download
+- cancellazione dell'intera coda
+
+Questo richiede un meccanismo di segnalazione tra thread, ad esempio tramite threading.Event oppure flag condivisi controllati periodicamente dai worker.
+
+Limite tecnico: yt-dlp esegue download bloccanti, quindi l'interruzione potrebbe richiedere gestione più complessa (thread separati o processi).
+
+Benefici:
+- controllo completo dell'utente
+- migliore UX
+
+Priorità: media.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 3 — SISTEMA DI LOGGING
+
+3.1 Introduzione del modulo logging
+
+Attualmente il codice utilizza print(..., file=sys.stderr) per segnalare errori e informazioni di debug. Sebbene funzionale durante lo sviluppo, questo approccio diventa limitante quando il software viene distribuito.
+
+È consigliabile utilizzare il modulo logging di Python che consente:
+
+- livelli di log (DEBUG, INFO, WARNING, ERROR)
+- scrittura su file
+- output su console
+- rotazione automatica dei file di log
+
+Un sistema di logging strutturato facilita il debugging, soprattutto quando l'applicazione viene utilizzata su macchine diverse da quella dello sviluppatore.
+
+Benefici:
+- diagnostica più efficace
+- debugging remoto possibile
+- maggiore professionalità del software
+
+Priorità: medio-bassa.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 4 — CONFIGURAZIONE ESTERNA
+
+4.1 Spostare le costanti configurabili in un file di configurazione
+
+Attualmente alcune impostazioni dell'applicazione sono definite come costanti nel codice sorgente, ad esempio:
+
+- numero massimo di download paralleli
+- qualità audio preferita
+- timeout di rete
+- cartella di destinazione
+
+È consigliabile spostare queste impostazioni in un file di configurazione esterno come:
+
+config.json
+oppure
+settings.toml
+
+Successivamente è possibile aggiungere una schermata "Impostazioni" nella UI per permettere all'utente di modificarle senza intervenire nel codice.
+
+Benefici:
+- maggiore flessibilità
+- configurazione persistente
+- migliore separazione tra codice e parametri
+
+Priorità: bassa.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 5 — GESTIONE ERRORI
+
+5.1 Strategia uniforme di gestione errori
+
+Nel codice attuale alcune eccezioni vengono semplicemente stampate sullo stderr senza fornire feedback all'utente. Questo può generare confusione quando qualcosa non funziona.
+
+È consigliabile adottare una strategia uniforme:
+
+Errori di rete:
+retry automatico e messaggio di stato.
+
+Errori non bloccanti:
+notifica discreta nella UI.
+
+Errori critici:
+dialog esplicativo tramite messagebox.
+
+Benefici:
+- comportamento più prevedibile
+- migliore esperienza utente
+- diagnosi più semplice dei problemi
+
+Priorità: media.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 6 — MIGLIORAMENTO ESTETICO DELL'INTERFACCIA
+
+6.1 Migrazione a CustomTkinter
+
+Tkinter con ttk è funzionale ma l'aspetto grafico è relativamente datato. CustomTkinter offre componenti più moderni e supporto nativo per dark mode.
+
+Il passaggio è generalmente semplice perché la libreria è quasi compatibile con Tkinter.
+
+Benefici:
+- interfaccia più moderna
+- migliore percezione qualitativa dell'applicazione
+
+Priorità: bassa.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 7 — LIMITAZIONE DELLE RICHIESTE API
+
+7.1 Rate limiting verso Deezer
+
+Se l'applicazione esegue molte richieste API in poco tempo (ad esempio durante ricerche multiple o caricamento rapido di album), si rischia di saturare il servizio o ricevere limitazioni temporanee.
+
+È opportuno introdurre un rate limiter che garantisca un intervallo minimo tra le richieste HTTP.
+
+Benefici:
+- prevenzione di blocchi API
+- maggiore stabilità
+
+Priorità: medio-alta.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 8 — SESSIONI HTTP PERSISTENTI
+
+8.1 Utilizzo di requests.Session()
+
+Attualmente ogni chiamata HTTP crea una nuova connessione TCP. Questo comporta:
+
+- nuova handshake TLS
+- maggiore latenza
+- maggiore overhead di rete
+
+Utilizzare una sessione persistente consente di riutilizzare le connessioni tramite keep-alive.
+
+Benefici:
+- richieste più veloci
+- minore latenza
+- minore carico di rete
+
+Priorità: alta.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 9 — CACHE DELLE RISPOSTE API
+
+9.1 Cache locale dei risultati
+
+Molte richieste API vengono ripetute più volte per gli stessi dati (artisti, album, tracce).
+
+Una cache in memoria permette di riutilizzare risultati già ottenuti evitando nuove chiamate HTTP.
+
+Benefici:
+- UI molto più veloce
+- meno traffico di rete
+- minor carico sull'API
+
+Priorità: alta.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 10 — SEPARAZIONE ARCHITETTURALE DEL CODICE
+
+10.1 Separazione tra logica e interfaccia
+
+Attualmente alcune parti della logica applicativa sono mescolate con il codice della UI.
+
+È preferibile organizzare il progetto in moduli separati:
+
+api/
+gestione API esterne
+
+core/
+logica download e gestione code
+
+ui/
+interfaccia grafica
+
+Benefici:
+- codice più leggibile
+- manutenzione più semplice
+- maggiore testabilità
+
+Priorità: medio-alta.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 11 — SISTEMA DI CODA PER DOWNLOAD
+
+11.1 Introduzione di una vera coda di task
+
+Attualmente i download sono gestiti tramite ThreadPoolExecutor. Questo approccio è semplice ma limita alcune funzionalità avanzate.
+
+Una coda dedicata permette:
+
+- pausa globale
+- riordino download
+- retry automatico
+- gestione stato dei task
+
+Benefici:
+- maggiore controllo
+- gestione avanzata dei download
+
+Priorità: media.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 12 — SANITIZZAZIONE NOMI FILE
+
+12.1 Gestione caratteri invalidi
+
+Alcuni nomi di artisti o tracce possono contenere caratteri non validi per il filesystem Windows.
+
+È necessario sanitizzare i nomi dei file rimuovendo caratteri proibiti.
+
+Benefici:
+- prevenzione errori filesystem
+- maggiore compatibilità cross-platform
+
+Priorità: medio-alta.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 13 — PROGRESSO DOWNLOAD
+
+13.1 Hook di progresso di yt-dlp
+
+yt-dlp mette a disposizione hook che permettono di ricevere aggiornamenti durante il download.
+
+Utilizzando questi hook è possibile mostrare:
+
+- percentuale download
+- velocità
+- tempo stimato rimanente
+
+Benefici:
+- feedback visivo per l'utente
+- percezione di maggiore qualità dell'app
+
+Priorità: media.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 14 — CONTROLLO FILE GIÀ ESISTENTI
+
+14.1 Evitare download duplicati
+
+Prima di scaricare una traccia è opportuno verificare se il file esiste già nella cartella di destinazione.
+
+Questo evita:
+
+- download inutili
+- consumo banda
+- duplicati nella libreria
+
+Priorità: medio-alta.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 15 — TIMEOUT DI RETE
+
+15.1 Timeout obbligatori per richieste HTTP
+
+Le richieste HTTP senza timeout possono rimanere bloccate indefinitamente in caso di problemi di rete.
+
+È buona pratica specificare sempre un timeout.
+
+Benefici:
+- prevenzione blocchi
+- maggiore stabilità
+
+Priorità: alta.
+
+────────────────────────────────────────────────────────
+
+SEZIONE 16 — RETRY AUTOMATICI
+
+16.1 Gestione errori di rete temporanei
+
+La rete può fallire per cause temporanee. Implementare un sistema di retry automatico con piccoli ritardi riduce la probabilità di fallimenti casuali.
+
+Benefici:
+- maggiore affidabilità
+- minori errori sporadici
+
+Priorità: medio-alta.
+
+────────────────────────────────────────────────────────
+
+
+FINE DOCUMENTO

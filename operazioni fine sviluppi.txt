@@ -1,0 +1,17 @@
+1. Creazione eseguibile standalone
+
+Per distribuire l'applicazione a utenti che non hanno Python installato è consigliabile creare un eseguibile tramite PyInstaller.
+
+Attenzione particolare deve essere prestata alla gestione di:
+
+- yt-dlp
+- ffmpeg
+
+che devono essere inclusi correttamente nel bundle.
+
+Benefici:
+- distribuzione semplice
+- installazione immediata per l'utente finale
+
+Priorità: finale (da fare dopo lo sviluppo).
+
