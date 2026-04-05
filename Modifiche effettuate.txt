@@ -37,3 +37,12 @@ Modifiche da fare:
 35. Aggiunto campo "duration" ai dizionari traccia in get_album_tracks() e search_track(); propagato nei meta tramite _make_meta() e nel handler on_dclick della ricerca canzone
 36. Rate limit Deezer: aggiunto time.sleep(0.1) all'inizio di MusicSearcher._get() per ridurre il rischio di blocchi su ricerche rapide in successione
 37. Aggiunta dipendenza rapidfuzz==3.12.2 in requirements.txt
+38. Tutte le chiamate Deezer (ricerca artista, ricerca canzone, caricamento album, caricamento tracce) spostate in thread daemon con root.after() per aggiornare la UI: eliminati i freeze del main thread
+39. requests.Session() in MusicSearcher: connessioni TCP riutilizzate tra chiamate successive (keep-alive, meno latenza)
+40. Cache in-memoria in MusicSearcher per risultati API: artisti, album, tracce album, ricerche canzone — evita chiamate HTTP duplicate nella stessa sessione
+41. Pipeline resolver/worker in _run_download: thread resolver scorre la coda pre-fetchando genere e URL YouTube e li deposita in una Queue; 3 worker consumano dalla Queue e scaricano non appena un item è pronto — elimina i blocchi tra batch sovrapponendo pre-fetch e download
+42. Cancellazione download: threading.Event (_cancel_event) condiviso tra resolver e worker; pulsante "Annulla download" nel pannello di download; item non ancora avviati vengono saltati e contati come falliti con etichetta "(annullato)"; il download in corso da yt-dlp viene comunque completato (limite tecnico blocco yt-dlp)
+43. Logger strutturato (modulo logging): RotatingFileHandler su music_downloader.log (1 MB, 2 backup) + StreamHandler per WARNING+; tutti i print(stderr) sostituiti con logger.warning/logger.error
+44. Config esterno: config.json caricato all'avvio con fallback ai valori default; se non esiste viene creato automaticamente; tutte le costanti leggono da _cfg
+45. Multi-selezione album: selectmode=EXTENDED nella listbox album; Ctrl+click e Shift+click per selezione multipla; menu contestuale con "Scarica N album selezionati" che chiede una cartella, crea una sottocartella per ogni album e scarica tutte le tracce in un'unica pipeline; per le selezioni singole il menu resta invariato
+46. Gestione errori uniforme: tutti gli errori di rete/IO vanno al logger; errori critici al momento del download mostrati in messagebox; errori non bloccanti (tag, artwork, genre) loggati e silenziosi per l'utente

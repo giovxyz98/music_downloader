@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+import logging
+from logging.handlers import RotatingFileHandler
 import requests
 import yt_dlp
 import sys
@@ -32,20 +34,61 @@ SUCCESS = "#4ade80"
 BORDER  = "#4b5563"
 
 # ─────────────────────────────────────────────────────────────
-# Configurazione
+# Logger
 # ─────────────────────────────────────────────────────────────
-MAX_WORKERS           = 3      # download paralleli contemporanei
-PREFERRED_QUALITY     = "320"  # qualità mp3 in kbps
-SOCKET_TIMEOUT        = 30     # timeout connessione yt-dlp (secondi)
-RETRIES               = 3      # tentativi yt-dlp + MusicSearcher
-YOUTUBE_RESULTS       = 5      # risultati YouTube da valutare
-FILENAME_MAX_LENGTH   = 180    # limite caratteri nome file
-MAX_SEARCHES          = 50     # ricerche recenti salvate in cache
-MAX_HISTORY           = 500    # download in cronologia
-HISTORY_MENU_MAX      = 40     # voci mostrate nel menu cronologia
-RECENT_SEARCHES_SHOWN = 10     # ricerche recenti mostrate in home
-DEEZER_ARTIST_LIMIT   = 100    # risultati ricerca artisti Deezer
-DEEZER_TRACK_LIMIT    = 50     # risultati ricerca canzoni Deezer
+logger = logging.getLogger("music_downloader")
+logger.setLevel(logging.DEBUG)
+_log_file = Path(__file__).parent / "music_downloader.log"
+_fh = RotatingFileHandler(_log_file, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
+_fh.setLevel(logging.DEBUG)
+_fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_ch = logging.StreamHandler()
+_ch.setLevel(logging.WARNING)
+_ch.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+logger.addHandler(_fh)
+logger.addHandler(_ch)
+
+# ─────────────────────────────────────────────────────────────
+# Configurazione  (valori default + override da config.json)
+# ─────────────────────────────────────────────────────────────
+_CFG_DEFAULTS = {
+    "MAX_WORKERS":           3,
+    "PREFERRED_QUALITY":     "320",
+    "SOCKET_TIMEOUT":        30,
+    "RETRIES":               3,
+    "YOUTUBE_RESULTS":       5,
+    "FILENAME_MAX_LENGTH":   180,
+    "MAX_SEARCHES":          50,
+    "MAX_HISTORY":           500,
+    "HISTORY_MENU_MAX":      40,
+    "RECENT_SEARCHES_SHOWN": 10,
+    "DEEZER_ARTIST_LIMIT":   100,
+    "DEEZER_TRACK_LIMIT":    50,
+}
+_cfg_file = Path(__file__).parent / "config.json"
+try:
+    with open(_cfg_file, "r", encoding="utf-8") as _f:
+        _cfg = {**_CFG_DEFAULTS, **json.load(_f)}
+except FileNotFoundError:
+    _cfg = dict(_CFG_DEFAULTS)
+    with open(_cfg_file, "w", encoding="utf-8") as _f:
+        json.dump(_CFG_DEFAULTS, _f, indent=2)
+except Exception as _e:
+    logger.warning(f"config.json non leggibile, uso default: {_e}")
+    _cfg = dict(_CFG_DEFAULTS)
+
+MAX_WORKERS           = _cfg["MAX_WORKERS"]
+PREFERRED_QUALITY     = _cfg["PREFERRED_QUALITY"]
+SOCKET_TIMEOUT        = _cfg["SOCKET_TIMEOUT"]
+RETRIES               = _cfg["RETRIES"]
+YOUTUBE_RESULTS       = _cfg["YOUTUBE_RESULTS"]
+FILENAME_MAX_LENGTH   = _cfg["FILENAME_MAX_LENGTH"]
+MAX_SEARCHES          = _cfg["MAX_SEARCHES"]
+MAX_HISTORY           = _cfg["MAX_HISTORY"]
+HISTORY_MENU_MAX      = _cfg["HISTORY_MENU_MAX"]
+RECENT_SEARCHES_SHOWN = _cfg["RECENT_SEARCHES_SHOWN"]
+DEEZER_ARTIST_LIMIT   = _cfg["DEEZER_ARTIST_LIMIT"]
+DEEZER_TRACK_LIMIT    = _cfg["DEEZER_TRACK_LIMIT"]
 
 # ─────────────────────────────────────────────────────────────
 # MusicSearcher  –  Deezer metadata client
@@ -53,14 +96,20 @@ DEEZER_TRACK_LIMIT    = 50     # risultati ricerca canzoni Deezer
 class MusicSearcher:
     BASE = "https://api.deezer.com"
 
+    def __init__(self):
+        self._session      = requests.Session()
+        self._artist_cache: Dict[str, List[Dict]] = {}
+        self._album_cache:  Dict[str, List[Dict]] = {}
+        self._track_cache:  Dict[str, List[Dict]] = {}
+        self._search_cache: Dict[str, List[Dict]] = {}
+
     def _get(self, url: str, params: Optional[Dict] = None) -> Dict:
         time.sleep(0.1)
         for attempt in range(RETRIES):
             try:
-                r = requests.get(url, params=params, timeout=10)
+                r = self._session.get(url, params=params, timeout=10)
                 if not r.ok:
-                    print(f"[MusicSearcher] HTTP {r.status_code} per {url}: {r.text[:300]}",
-                          file=sys.stderr)
+                    logger.warning(f"[MusicSearcher] HTTP {r.status_code} per {url}: {r.text[:300]}")
                 r.raise_for_status()
                 data = r.json()
                 if "error" in data:
@@ -69,14 +118,16 @@ class MusicSearcher:
                     )
                 return data
             except requests.RequestException as e:
-                print(f"[MusicSearcher] Tentativo {attempt+1}/{RETRIES} fallito: {e}", file=sys.stderr)
+                logger.warning(f"[MusicSearcher] Tentativo {attempt+1}/{RETRIES} fallito: {e}")
                 if attempt == RETRIES - 1:
                     raise RuntimeError(f"Richiesta fallita dopo {RETRIES} tentativi: {e}")
                 time.sleep(1 * (2 ** attempt))
 
     def search_artist(self, name: str) -> List[Dict]:
+        if name in self._artist_cache:
+            return self._artist_cache[name]
         data = self._get(f"{self.BASE}/search/artist", {"q": name, "limit": DEEZER_ARTIST_LIMIT})
-        return [
+        result = [
             {
                 "id": a["id"],
                 "nome": a["name"],
@@ -86,10 +137,14 @@ class MusicSearcher:
             }
             for a in data.get("data", []) if a.get("id")
         ]
+        self._artist_cache[name] = result
+        return result
 
     def search_track(self, query: str) -> List[Dict]:
+        if query in self._search_cache:
+            return self._search_cache[query]
         data = self._get(f"{self.BASE}/search/track", {"q": query, "limit": DEEZER_TRACK_LIMIT})
-        return [
+        result = [
             {
                 "id":        t["id"],
                 "nome":      t["title"],
@@ -101,8 +156,13 @@ class MusicSearcher:
             }
             for t in data.get("data", []) if t.get("id")
         ]
+        self._search_cache[query] = result
+        return result
 
     def get_artist_albums(self, artist_id: str) -> List[Dict]:
+        key = str(artist_id)
+        if key in self._album_cache:
+            return self._album_cache[key]
         url = f"{self.BASE}/artist/{artist_id}/albums"
         albums, seen = [], set()
         while url:
@@ -118,11 +178,15 @@ class MusicSearcher:
                         "artist_id": album["artist"]["id"] if album.get("artist") else artist_id,
                     })
             url = data.get("next")
+        self._album_cache[key] = albums
         return albums
 
     def get_album_tracks(self, album_id: str) -> List[Dict]:
+        key = str(album_id)
+        if key in self._track_cache:
+            return self._track_cache[key]
         data = self._get(f"{self.BASE}/album/{album_id}/tracks")
-        return [
+        result = [
             {
                 "id":       track["id"],
                 "nome":     track["title"],
@@ -132,6 +196,8 @@ class MusicSearcher:
             }
             for track in data.get("data", [])
         ]
+        self._track_cache[key] = result
+        return result
 
     def get_album_details(self, album_id: str) -> Dict:
         data = self._get(f"{self.BASE}/album/{album_id}")
@@ -207,7 +273,7 @@ class AudioDownloader:
             )
             return [e["url"] for e in scored]
         except Exception as e:
-            print(f"[AudioDownloader] Errore ricerca '{query}': {e}", file=sys.stderr)
+            logger.error(f"[AudioDownloader] Errore ricerca '{query}': {e}")
         return []
 
     @staticmethod
@@ -267,7 +333,7 @@ class CacheManager:
                 self.data["download_history"] = loaded.get("download_history", [])
                 self.data["youtube_cache"]    = loaded.get("youtube_cache", {})
             except Exception as e:
-                print(f"[Cache] Errore lettura: {e}", file=sys.stderr)
+                logger.error(f"[Cache] Errore lettura: {e}")
 
     def save(self):
         with self._save_lock:
@@ -275,7 +341,7 @@ class CacheManager:
                 with open(self.CACHE_FILE, "w", encoding="utf-8") as f:
                     json.dump(self.data, f, ensure_ascii=False, indent=2)
             except Exception as e:
-                print(f"[Cache] Errore salvataggio: {e}", file=sys.stderr)
+                logger.error(f"[Cache] Errore salvataggio: {e}")
 
     def add_search(self, type_: str, query: str):
         self.data["recent_searches"] = [
@@ -375,6 +441,7 @@ class MusicDownloaderApp:
         self._dl_general_bar:  ttk.Progressbar = None
         self._dl_general_var:  tk.StringVar    = None
         self._track_widgets:   dict            = {}  # item_id → (frame, bar)
+        self._cancel_event:    threading.Event = threading.Event()
 
         self._setup_menubar()
         self._build_layout()
@@ -582,7 +649,7 @@ class MusicDownloaderApp:
 
         # Barra progresso generale
         bottom = tk.Frame(self.queue_panel, bg=PANEL)
-        bottom.pack(fill="x", padx=8, pady=(6, 8))
+        bottom.pack(fill="x", padx=8, pady=(6, 4))
         self._dl_general_var = tk.StringVar(value=f"0 / {total}")
         tk.Label(bottom, textvariable=self._dl_general_var,
                  font=("Segoe UI", 8), bg=PANEL, fg=SUBTEXT).pack(anchor="w")
@@ -591,6 +658,10 @@ class MusicDownloaderApp:
             mode="determinate", style="Music.Horizontal.TProgressbar"
         )
         self._dl_general_bar.pack(fill="x", pady=2)
+
+        ttk.Button(self.queue_panel, text="Annulla download",
+                   command=self._cancel_event.set,
+                   style="Ghost.TButton").pack(fill="x", padx=8, pady=(2, 8))
 
         self._track_widgets = {}
 
@@ -731,34 +802,36 @@ class MusicDownloaderApp:
             self._do_artist_search(query)
 
     def _do_artist_search(self, query: str):
-        try:
-            artists = self.searcher.search_artist(query)
-        except Exception as e:
-            print(f"[Errore ricerca artista] {e}", file=sys.stderr)
-            self.search_status.config(text=f"Errore: {e}", fg=ERROR)
-            return
-        if not artists:
-            self.search_status.config(text="Nessun artista trovato.", fg=ERROR)
-            return
-        self.cache.add_search("artista", query)
-        if len(artists) == 1:
-            self.current_artist = artists[0]
-            self._show_albums()
-        else:
-            self._show_artist_selection(artists)
+        def _work():
+            try:
+                artists = self.searcher.search_artist(query)
+            except Exception as e:
+                self.root.after(0, lambda: self.search_status.config(text=f"Errore: {e}", fg=ERROR))
+                return
+            if not artists:
+                self.root.after(0, lambda: self.search_status.config(text="Nessun artista trovato.", fg=ERROR))
+                return
+            self.cache.add_search("artista", query)
+            if len(artists) == 1:
+                self.current_artist = artists[0]
+                self.root.after(0, self._show_albums)
+            else:
+                self.root.after(0, self._show_artist_selection, artists)
+        threading.Thread(target=_work, daemon=True).start()
 
     def _do_track_search(self, query: str):
-        try:
-            tracks = self.searcher.search_track(query)
-        except Exception as e:
-            print(f"[Errore ricerca canzone] {e}", file=sys.stderr)
-            self.search_status.config(text=f"Errore: {e}", fg=ERROR)
-            return
-        if not tracks:
-            self.search_status.config(text="Nessuna canzone trovata.", fg=ERROR)
-            return
-        self.cache.add_search("canzone", query)
-        self._show_track_results(tracks)
+        def _work():
+            try:
+                tracks = self.searcher.search_track(query)
+            except Exception as e:
+                self.root.after(0, lambda: self.search_status.config(text=f"Errore: {e}", fg=ERROR))
+                return
+            if not tracks:
+                self.root.after(0, lambda: self.search_status.config(text="Nessuna canzone trovata.", fg=ERROR))
+                return
+            self.cache.add_search("canzone", query)
+            self.root.after(0, self._show_track_results, tracks)
+        threading.Thread(target=_work, daemon=True).start()
 
     # ── Schermata: Selezione artista ─────────────────────────
 
@@ -892,19 +965,32 @@ class MusicDownloaderApp:
             idx = self.albums_lb.nearest(event.y)
             if idx < 0 or idx >= len(self.filtered_albums):
                 return
-            self.albums_lb.selection_clear(0, tk.END)
-            self.albums_lb.selection_set(idx)
+            # Se il click è su un elemento già selezionato, mantieni la selezione multipla;
+            # altrimenti resetta e seleziona solo quello cliccato.
+            if idx not in self.albums_lb.curselection():
+                self.albums_lb.selection_clear(0, tk.END)
+                self.albums_lb.selection_set(idx)
+
+            selected_indices = list(self.albums_lb.curselection())
+            selected_albums  = [self.filtered_albums[i] for i in selected_indices
+                                 if i < len(self.filtered_albums)]
             album       = self.filtered_albums[idx]
             artist_name = album["artisti"][0] if album.get("artisti") else ""
+
             menu = tk.Menu(self.root, tearoff=0, bg=CARD, fg=TEXT,
                            activebackground=ACCENT, activeforeground=TEXT, borderwidth=0)
-            if album.get("artist_id") and artist_name:
+            if len(selected_albums) == 1:
+                if album.get("artist_id") and artist_name:
+                    menu.add_command(
+                        label="Vai all'artista",
+                        command=lambda: self._goto_artist(album["artist_id"], artist_name))
                 menu.add_command(
-                    label="Vai all'artista",
-                    command=lambda: self._goto_artist(album["artist_id"], artist_name))
-            menu.add_command(
-                label="Scarica album",
-                command=lambda: self._download_album_direct(album))
+                    label="Scarica album",
+                    command=lambda: self._download_album_direct(album))
+            else:
+                menu.add_command(
+                    label=f"Scarica {len(selected_albums)} album selezionati",
+                    command=lambda a=selected_albums: self._download_albums_batch(a))
             menu.tk_popup(event.x_root, event.y_root)
 
         self.albums_lb.bind("<Button-3>", show_menu)
@@ -916,16 +1002,20 @@ class MusicDownloaderApp:
         status = tk.Label(self.nav_frame, text="Caricamento album...",
                           fg=SUBTEXT, font=("Segoe UI", 10), bg=BG)
         status.pack()
-        self.root.update()
 
-        try:
-            self.current_albums = self.searcher.get_artist_albums(self.current_artist["id"])
-        except Exception as e:
-            print(f"[Errore album] {e}", file=sys.stderr)
-            status.config(text=f"Errore: {e}", fg=ERROR)
-            return
+        def _fetch():
+            try:
+                albums = self.searcher.get_artist_albums(self.current_artist["id"])
+            except Exception as e:
+                self.root.after(0, lambda: status.config(text=f"Errore: {e}", fg=ERROR))
+                return
+            self.root.after(0, lambda: self._finish_show_albums(albums, status))
 
-        status.destroy()
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _finish_show_albums(self, albums: list, status_label: tk.Label):
+        status_label.destroy()
+        self.current_albums = albums
 
         tk.Label(self.nav_frame,
                  text=f"{len(self.current_albums)} album trovati  —  doppio click per vedere le tracce",
@@ -939,7 +1029,8 @@ class MusicDownloaderApp:
         self.albums_lb = tk.Listbox(
             list_frame, font=("Segoe UI", 11),
             bg=PANEL, fg=TEXT, selectbackground=ACCENT, selectforeground=TEXT,
-            activestyle="none", bd=0, highlightthickness=0, yscrollcommand=sb.set
+            activestyle="none", bd=0, highlightthickness=0, yscrollcommand=sb.set,
+            selectmode=tk.EXTENDED
         )
         self.albums_lb.pack(side="left", fill="both", expand=True)
         sb.config(command=self.albums_lb.yview)
@@ -992,16 +1083,20 @@ class MusicDownloaderApp:
         status = tk.Label(self.nav_frame, text="Caricamento tracce...",
                           fg=SUBTEXT, font=("Segoe UI", 10), bg=BG)
         status.pack(pady=4)
-        self.root.update()
 
-        try:
-            self.current_tracks = self.searcher.get_album_tracks(album["id"])
-        except Exception as e:
-            print(f"[Errore tracce] {e}", file=sys.stderr)
-            status.config(text=f"Errore: {e}", fg=ERROR)
-            return
+        def _fetch():
+            try:
+                tracks = self.searcher.get_album_tracks(album["id"])
+            except Exception as e:
+                self.root.after(0, lambda: status.config(text=f"Errore: {e}", fg=ERROR))
+                return
+            self.root.after(0, lambda: self._finish_show_tracks(tracks, album, status))
 
-        status.destroy()
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _finish_show_tracks(self, tracks: list, album: dict, status_label: tk.Label):
+        status_label.destroy()
+        self.current_tracks = tracks
 
         tk.Label(self.nav_frame, text="Doppio click per aggiungere alla coda",
                  fg=SUBTEXT, font=("Segoe UI", 9), bg=BG).pack(pady=(0, 6))
@@ -1125,6 +1220,7 @@ class MusicDownloaderApp:
         if not destination:
             return
         queue = list(self.download_queue)
+        self._cancel_event.clear()
         self.btn_download.config(state="disabled")
         self._show_download_panel(len(queue))
         threading.Thread(
@@ -1178,7 +1274,7 @@ class MusicDownloaderApp:
                     tags[key] = [str(val)]
             tags.save()
         except Exception as e:
-            print(f"[Tags] Errore su {filepath}: {e}", file=sys.stderr)
+            logger.error(f"[Tags] Errore su {filepath}: {e}")
         # Copertina album
         cover_url = meta.get("cover_url", "")
         if cover_url:
@@ -1191,7 +1287,7 @@ class MusicDownloaderApp:
                                desc="Cover", data=img_data))
                 tags2.save()
             except Exception as e:
-                print(f"[Tags] Errore artwork {filepath}: {e}", file=sys.stderr)
+                logger.error(f"[Tags] Errore artwork {filepath}: {e}")
 
     def _prepare_meta(self, item: dict, genre_info: tuple = None) -> dict:
         """Arricchisce il dizionario meta con genere, tracknumber completo e cover."""
@@ -1225,24 +1321,27 @@ class MusicDownloaderApp:
         return urls
 
     def _download_single(self, item: dict, destination: str,
-                         progress_cb=None, genre_info: tuple = None) -> tuple:
+                         progress_cb=None, genre_info: tuple = None,
+                         urls: List[str] = None) -> tuple:
         """Scarica e tagga una traccia. Restituisce (ok: bool, err_label: str|None)."""
+        dest     = item.get("destination") or destination
         meta     = self._prepare_meta(item, genre_info)
         title    = meta.get("title") or item["label"]
         artist   = meta.get("artist") or ""
         raw_name = f"{artist} - {title}" if artist else title
         filename = re.sub(r'[<>:"/\\|?*\n\r\t]', '_', raw_name).strip()[:FILENAME_MAX_LENGTH]
 
-        if Path(destination, f"{filename}.mp3").exists():
+        if Path(dest, f"{filename}.mp3").exists():
             return True, None
 
-        urls = self._resolve_url(item)
+        if urls is None:
+            urls = self._resolve_url(item)
         if not urls:
             return False, item["label"]
 
         for url in urls:
             try:
-                filepath = self.downloader.download(url, destination, filename=filename,
+                filepath = self.downloader.download(url, dest, filename=filename,
                                                     progress_callback=progress_cb)
                 self._tag_file(filepath, meta)
                 return True, None
@@ -1253,43 +1352,74 @@ class MusicDownloaderApp:
     def _run_download(self, queue: list, destination: str,
                       genre_info: tuple = None, artist_name: str = None,
                       clear_queue: bool = False):
-        """Download parallelo (max 3 contemporanei). Aggiorna il pannello download."""
-        if genre_info is None:
-            seen: set = set()
-            for item in queue:
-                aid = (item.get("meta") or {}).get("album_id", "")
-                if aid and aid not in seen:
-                    seen.add(aid)
-                    self._get_genre(aid)
-
+        """Pipeline resolver/worker: il resolver pre-fetcha genere e URL YouTube
+        in avanti; i 3 worker scaricano non appena un item è pronto, senza blocchi
+        tra batch."""
         total = len(queue)
         lock  = threading.Lock()
         state = {"successi": 0, "falliti": [], "completed": 0}
+        ready: Queue = Queue()  # produce (item, urls) oppure None come sentinel
 
-        def download_track(item):
-            item_id = id(item)
-            self.root.after(0, self._track_started, item, item_id)
+        def resolver():
+            for item in queue:
+                if self._cancel_event.is_set():
+                    break
+                if genre_info is None:
+                    aid = (item.get("meta") or {}).get("album_id", "")
+                    if aid:
+                        self._get_genre(aid)
+                urls = self._resolve_url(item)
+                ready.put((item, urls))
+            for _ in range(MAX_WORKERS):
+                ready.put(None)
 
-            def progress_cb(percent):
-                self.root.after(0, self._update_track_progress, item_id, percent)
+        def worker():
+            while True:
+                task = ready.get()
+                if task is None:
+                    break
+                item, urls = task
+                item_id = id(item)
 
-            try:
-                ok, err = self._download_single(item, destination, progress_cb, genre_info)
-            except Exception as e:
-                ok, err = False, f"{item['label']} ({str(e)[:40]})"
+                if self._cancel_event.is_set():
+                    with lock:
+                        state["completed"] += 1
+                        state["falliti"].append(f"{item['label']} (annullato)")
+                        c = state["completed"]
+                    self.root.after(0, self._track_completed, item, item_id, False, c, total)
+                    continue
 
-            with lock:
-                state["completed"] += 1
-                if ok:
-                    state["successi"] += 1
-                else:
-                    state["falliti"].append(err)
-                c = state["completed"]
+                self.root.after(0, self._track_started, item, item_id)
 
-            self.root.after(0, self._track_completed, item, item_id, ok, c, total)
+                def progress_cb(percent, _id=item_id):
+                    self.root.after(0, self._update_track_progress, _id, percent)
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            list(pool.map(download_track, queue))
+                try:
+                    ok, err = self._download_single(item, destination, progress_cb,
+                                                    genre_info, urls=urls)
+                except Exception as e:
+                    ok, err = False, f"{item['label']} ({str(e)[:40]})"
+
+                with lock:
+                    state["completed"] += 1
+                    if ok:
+                        state["successi"] += 1
+                    else:
+                        state["falliti"].append(err)
+                    c = state["completed"]
+
+                self.root.after(0, self._track_completed, item, item_id, ok, c, total)
+
+        resolver_t = threading.Thread(target=resolver, daemon=True)
+        resolver_t.start()
+
+        workers = [threading.Thread(target=worker, daemon=True) for _ in range(MAX_WORKERS)]
+        for t in workers:
+            t.start()
+
+        resolver_t.join()
+        for t in workers:
+            t.join()
 
         self.root.after(0, self._download_all_done,
                         state["successi"], state["falliti"],
@@ -1369,6 +1499,42 @@ class MusicDownloaderApp:
     def _safe_name(name: str) -> str:
         return re.sub(r'[<>:"/\\|?*]', '_', name).strip()[:FILENAME_MAX_LENGTH]
 
+    def _download_albums_batch(self, albums: list):
+        """Download di più album in batch: una sottocartella per album nella dest scelta."""
+        destination = filedialog.askdirectory(title="Seleziona cartella di destinazione")
+        if not destination:
+            return
+
+        queue = []
+        for album in albums:
+            try:
+                tracks = self.searcher.get_album_tracks(album["id"])
+            except Exception as e:
+                messagebox.showerror("Errore", f"Impossibile caricare '{album['nome']}': {e}")
+                return
+            album_folder = str(Path(destination) / self._safe_name(album["nome"]))
+            Path(album_folder).mkdir(parents=True, exist_ok=True)
+            for track in tracks:
+                queue.append({
+                    "query":       self._make_query(track),
+                    "label":       track["nome"],
+                    "meta":        self._make_meta(track, album),
+                    "destination": album_folder,
+                })
+
+        if not queue:
+            return
+
+        artist_name = self.current_artist["nome"] if self.current_artist else ""
+        self._cancel_event.clear()
+        self._show_download_panel(len(queue))
+        threading.Thread(
+            target=self._run_download,
+            args=(queue, destination),
+            kwargs={"artist_name": artist_name, "clear_queue": False},
+            daemon=True,
+        ).start()
+
     def _download_album_direct(self, album: dict):
         destination = filedialog.askdirectory(title="Seleziona cartella di destinazione")
         if not destination:
@@ -1394,6 +1560,7 @@ class MusicDownloaderApp:
         artist_name = self.current_artist["nome"] if self.current_artist else ""
         genre_info  = self._get_genre(str(album.get("id", "")))
 
+        self._cancel_event.clear()
         self._show_download_panel(len(queue))
         threading.Thread(
             target=self._run_download,
