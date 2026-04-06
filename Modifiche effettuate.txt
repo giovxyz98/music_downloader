@@ -52,3 +52,16 @@ Modifiche da fare:
 46. Gestione errori uniforme: tutti gli errori di rete/IO vanno al logger; errori critici al momento del download mostrati in messagebox; errori non bloccanti (tag, artwork, genre) loggati e silenziosi per l'utente
 47. Fix download parallelo: resolver fa solo genre pre-fetch (una chiamata per album, non per traccia), poi mette tutti gli item in queue subito; i 3 worker fanno URL resolution e download in parallelo — ripristina il comportamento parallelo reale
 48. Rework UI pannello download: _show_download_panel riceve la queue completa e pre-popola tutte le righe (icona ○, nome, barra a 0%); worker aggiorna icona a ▶ all'avvio, a ✓/✗ al termine; unbind mousewheel al ripristino pannello coda
+49. Migrazione UI da Tkinter/ttk a CustomTkinter: widget moderni con dark mode nativa (CTkFrame, CTkLabel, CTkButton, CTkEntry, CTkRadioButton, CTkComboBox, CTkProgressBar); Treeview e Listbox mantenuti in tk/ttk (nessun equivalente CTk); CTkScrollableFrame nel pannello download al posto di Canvas+mousewheel manuale
+50. Logging completo per sviluppo: aggiunto INFO/DEBUG/WARNING/ERROR su avvio app, ricerche YouTube con score dettagliato per ogni risultato, cache hit/miss YouTube, chiamate Deezer con URL e params, ogni download con query e URL tentati, skip file già esistente, tag ID3 scritti campo per campo, copertina incorporata, annullamenti, errori worker con exc_info=True, log inizio/fine batch con totali
+51. concurrent_fragment_downloads=3 in yt-dlp: scarica 3 frammenti audio in parallelo aggirando il throttling YouTube che limitava le velocità a 40-70 KiB/s
+52. Split in moduli (3.1/10): codice riorganizzato in infra/ (config.py, cache.py), core/ (models.py, searcher.py, downloader.py), ui/ (app.py, helpers.py); music_downloader.py ridotto a thin entry point
+53. Typed models con dataclass (3.2): introdotte Artist, Album, Track, QueueItem — eliminano accessi a dict con chiavi stringa e migliorano type safety
+54. ScoringEngine configurabile (3.3): tutti i pesi _score() (SCORE_ARTIST_IN_TITLE, SCORE_TITLE_IN_TITLE, ecc.) letti da config.json
+55. yt-dlp timeout globale (3.4): AudioDownloader.download() avvolge _do_download in thread daemon con t.join(DOWNLOAD_TIMEOUT); RuntimeError se scade
+56. Lock su tutta la CacheManager (1.1): self._lock copre add_search, add_download, set_youtube_urls, get_youtube_urls, get_recent_searches, get_download_history; _save_unlocked() per chiamate interne già dentro il lock
+57. ThreadPoolExecutor per ricerche UI (1.2): self._ui_executor(max_workers=2) sostituisce threading.Thread in _do_artist_search, _do_track_search, _show_albums._fetch, _show_tracks._fetch; shutdown su chiusura finestra
+58. Limite cache in-memory MusicSearcher (2.1): _cache_set() con FIFO eviction a CACHE_MAXSIZE=200 entry per ciascuna delle 4 cache interne
+59. Pre-normalizzazione in _score() (2.2): art_n e tit_n calcolati una sola volta in search_youtube() e passati a _score() — elimina _normalize() ripetuta per ogni risultato
+60. Gestione HTTP 429 Deezer (2.3): MusicSearcher._get() intercetta status 429 e dorme Retry-After secondi prima di riprovare
+61. Timeout centralizzato (2.4) + sanitizzazione filename unificata (2.5): SOCKET_TIMEOUT usato in requests, urllib e yt-dlp; singola sanitize_filename() in core/downloader.py usata ovunque

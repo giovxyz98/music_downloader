@@ -8,3 +8,20 @@
 !music_downloader.py
 !start.bat
 !config.json
+!requirements.txt
+
+# Includi packages
+!/core/
+!/infra/
+!/ui/
+core/**
+infra/**
+ui/**
+!core/*.py
+!infra/*.py
+!ui/*.py
+
+# Escludi sempre
+**/__pycache__/
+**/*.pyc
+**/*.pyo
