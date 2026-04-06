@@ -1,8 +1,360 @@
 DOCUMENTO DI REVISIONE ARCHITETTURALE
 Progetto: Music Downloader (Python + CustomTkinter + yt-dlp)
 
-Tutte le migliorie elencate nella revisione (1.1–3.4 e sezione 10) sono state implementate nelle fix 52–61.
+════════════════════════════════════════════════════════════════
+SEZIONE A — DA FARE (cose decise, implementare)
+════════════════════════════════════════════════════════════════
 
-Nessun punto aperto.
+────────────────────────────────────────────────────────────────
+A1. ELIMINARE LOGICA COPERTINA / COVER ART
+────────────────────────────────────────────────────────────────
+File coinvolti: downloader.py, app.py
+
+Cosa rimuovere in downloader.py → funzione tag_file:
+  - Eliminare tutto il blocco "# Copertina" (dalla riga con
+    cover_url = meta.get("cover_url", "") fino alla fine della
+    funzione, incluso il try/except che fa urllib.request.urlopen
+    e aggiunge il tag APIC).
+  - Rimuovere import urllib.request (non serve più a nulla).
+  - Rimuovere gli import da mutagen.id3: ID3, APIC, ID3NoHeaderError
+    (APIC e ID3 servono solo per la cover; ID3NoHeaderError serve
+    solo nel blocco EasyID3 — se rimane usato nel blocco tag
+    testuali, tenerlo, altrimenti eliminarlo).
+
+Cosa rimuovere in app.py:
+  - Eliminare self._cover_cache (dict definito in __init__).
+  - In _get_genre: rimuovere la riga
+      cover_url = details.get("cover_xl", "")
+    e la riga
+      self._cover_cache[album_id] = cover_url
+  - In _prepare_meta: rimuovere il blocco
+      if album_id and album_id in self._cover_cache:
+          meta["cover_url"] = self._cover_cache[album_id]
+  - Verificare che nessun altro posto nel codice usi _cover_cache
+    o cover_url prima di rimuovere.
+
+Motivazione: le immagini non servono, scaricano la stessa cover
+N volte (una per traccia), inutile spreco di banda e tempo.
+
+────────────────────────────────────────────────────────────────
+A2. MIGLIORARE SCORING YOUTUBE
+────────────────────────────────────────────────────────────────
+File coinvolti: downloader.py (funzione _score e search_youtube),
+                config.py (nuove costanti)
+
+--- BONUS PRIMO RISULTATO ---
+
+Aggiungere in config.py:
+  SCORE_FIRST_RESULT_BONUS = 20
+
+Il primo risultato restituito da YouTube per la query riceve un
+bonus fisso di 20 punti. Motivazione: YouTube per query specifiche
+tipo "Gianni Celeste - Te penzo" fa già un ranking sofisticato;
+il primo risultato è quasi sempre quello più rilevante. Un bonus
+di 20 significa che un risultato successivo deve batterlo di 20
+punti per scalzarlo, soglia ragionevole.
+
+In search_youtube applicare il bonus prima del sort:
+  scored = sorted(
+      [(AudioDownloader._score(e, art_n, tit_n, duration)
+        + (SCORE_FIRST_RESULT_BONUS if i == 0 else 0), e)
+       for i, e in enumerate(entries)],
+      key=lambda x: x[0],
+      reverse=True,
+  )
+Adattare il resto della funzione per usare la tupla (score, entry).
+
+--- FUZZY MATCHING ---
+
+Sostituire fuzz.partial_ratio con fuzz.token_sort_ratio per il
+confronto tra titolo atteso e titolo YouTube. token_sort_ratio è
+più robusto perché ordina i token prima di confrontare, quindi è
+meno ingannato da parole aggiuntive nel titolo YouTube.
+
+--- PENALITÀ PAROLE EXTRA (sostituisce qualsiasi logica di
+    penalità lunghezza precedentemente discussa) ---
+
+Aggiungere in config.py:
+  SCORE_EXTRA_WORD_PENALTY = 10
+
+Logica da implementare in _score come metodo statico separato
+(es. _count_extra_words) o inline:
+
+Definire in AudioDownloader un frozenset statico _NOISE_WORDS:
+  _NOISE_WORDS = frozenset({
+      "official", "ufficiale", "video", "visual", "audio",
+      "hd", "4k", "lyrics", "testo", "seamusica", "ft", "feat",
+      "featuring", "records", "record", "music", "tv","videoclip",
+  })
+  Nota: anni a 4 cifre (es. "2003", "1991") vanno esclusi
+  separatamente con un controllo isdigit() + len == 4.
+
+Algoritmo per calcolare le parole "extra" nel titolo YouTube:
+  1. Prendi le parole del titolo YouTube normalizzato (split)
+  2. Rimuovi le _NOISE_WORDS
+  3. Rimuovi anni a 4 cifre (token.isdigit() and len(token) == 4)
+  4. Rimuovi ogni singola parola del titolo atteso (split di tit_n)
+  5. Rimuovi ogni singola parola di TUTTI gli artisti attesi
+     (split di art_n — che può contenere più artisti separati da
+     virgola o spazio, es. "massimo gianni celeste" → split in
+     ["massimo", "gianni", "celeste"] e controllare ognuna)
+  6. Rimuovi parole di 1 solo carattere (gestisce &, -, ecc.)
+  7. Il numero di token rimasti × SCORE_EXTRA_WORD_PENALTY = penalità
+
+Esempio pratico:
+  Titolo YouTube: "Massimo & Gianni Celeste - Vite Perdute - Official Seamusica"
+  Normalizzato:   "massimo gianni celeste vite perdute official seamusica"
+  Dopo noise:     "massimo gianni celeste vite perdute"
+  Dopo artista:   "vite perdute"  (tolti: massimo, gianni, celeste)
+  Dopo titolo:    ""              (tolti: vite, perdute)
+  Dopo 1-char:    ""
+  Parole extra: 0 → penalità 0 ✓
+
+  Titolo YouTube: "Però te penzo"
+  Normalizzato:   "pero te penzo"
+  Dopo noise:     "pero te penzo"
+  Dopo artista:   "pero te penzo"  (artista: gianni, celeste → non presenti)
+  Dopo titolo:    "pero"           (tolti: te, penzo)
+  Dopo 1-char:    "pero"
+  Parole extra: 1 → penalità -10 ✓
+
+--- SCORE CALCOLATO DUE VOLTE ---
+
+Attualmente _score viene chiamato una volta dentro sorted() e poi
+di nuovo nel ciclo for e in scored per il logging. Con la nuova
+struttura a tuple (score, entry) questo problema si risolve
+automaticamente perché lo score è già salvato nella tupla.
+Verificare che dopo il refactor non ci siano doppie chiamate.
+
+────────────────────────────────────────────────────────────────
+A3. SALTARE DOWNLOAD SE SCORE MASSIMO < SOGLIA MINIMA
+────────────────────────────────────────────────────────────────
+File coinvolti: config.py (nuova costante), app.py
+
+Aggiungere in config.py:
+  SCORE_MIN_DOWNLOAD = 20
+Questa costante va messa nella stessa sezione degli altri
+SCORE_* già presenti.
+
+In app.py → _download_single (oppure in search_youtube):
+  - Dopo aver calcolato gli score e ordinato i risultati,
+    controllare se il best score >= SCORE_MIN_DOWNLOAD.
+  - Se best score < SCORE_MIN_DOWNLOAD: NON tentare nessun
+    download, restituire subito:
+      (False, f"{item.label} (nessun match affidabile, score={best_score})")
+  - Loggare un WARNING ben visibile:
+      logger.warning(
+          f"[Download] Score troppo basso ({best_score}) per "
+          f"'{item.label}', download saltato"
+      )
+
+NOTA IMPLEMENTATIVA: con la nuova struttura a tuple (score, entry)
+in search_youtube, il best score è già disponibile come primo
+elemento della prima tupla dopo il sort. Si può fare il controllo
+direttamente in _download_single dopo aver chiamato _resolve_url,
+oppure fare in modo che search_youtube ritorni anche il best score.
+La prima opzione richiede che _resolve_url ritorni anche lo score.
+
+────────────────────────────────────────────────────────────────
+A4. ELIMINARE CACHING DEGLI URL YOUTUBE SU FILE (music_cache.json)
+────────────────────────────────────────────────────────────────
+File coinvolti: cache.py, app.py
+
+Motivazione: gli URL di YouTube scadono e cambiano nel tempo.
+Persistere gli URL su disco porta a riutilizzare URL stantii nelle
+sessioni successive, causando fallimenti silenziosi. La cache
+in-memory durante la sessione corrente è accettabile (evita
+ricerche duplicate nella stessa sessione), ma non deve mai essere
+scritta su file.
+
+Cosa fare in cache.py:
+  - Rimuovere i metodi get_youtube_urls e set_youtube_urls.
+  - In __init__: rimuovere "youtube_cache": {} da self.data.
+  - In _load: rimuovere la riga
+      self.data["youtube_cache"] = loaded.get("youtube_cache", {})
+  - Alla lettura di un music_cache.json esistente che contiene
+    ancora il campo "youtube_cache", ignorarlo semplicemente
+    (non caricarlo). Non serve riscrivere il file per pulirlo.
+
+Cosa fare in app.py:
+  - In _resolve_url: rimuovere le chiamate a
+      self.cache.get_youtube_urls(item.query)
+    e
+      self.cache.set_youtube_urls(item.query, urls)
+  - Sostituire con una cache in-memory locale all'istanza,
+    dichiarata in __init__:
+      self._yt_url_cache: dict = {}
+    Si azzera ad ogni avvio dell'app, comportamento corretto.
+
+ATTENZIONE — RACE CONDITION:
+  Con SEARCH_WORKERS=2, due worker possono cercare la stessa query
+  contemporaneamente. Entrambi trovano miss su _yt_url_cache,
+  entrambi fanno la ricerca YouTube, entrambi scrivono il risultato.
+  Nessun danno funzionale (il risultato è lo stesso) ma è uno
+  spreco. Proteggere _yt_url_cache con un threading.Lock oppure
+  accettare il comportamento sapendo che è benigno (duplicazione
+  rara in pratica perché le query di solito sono tutte diverse).
+
+────────────────────────────────────────────────────────────────
+A5. CHIAVI CACHE DEEZER NON NORMALIZZATE
+────────────────────────────────────────────────────────────────
+File coinvolti: searcher.py
+
+Problema: le chiavi dei dict _artist_cache e _search_cache usano
+la stringa così com'è. Se l'utente cerca "Gianni Celeste" e poi
+"gianni celeste" vengono trattate come due query distinte e vengono
+fatte due richieste API separate invece di usare la cache.
+
+Fix: normalizzare la chiave prima di usarla come indice del dict:
+  key = name.lower().strip()
+  if key in self._artist_cache: ...
+  self._cache_set(self._artist_cache, key, result)
+
+Da applicare in: search_artist, search_track, get_artist_albums,
+get_album_tracks (dove le chiavi sono già str(id) quindi
+normalizzazione non serve, ma per le ricerche testuali sì).
+
+────────────────────────────────────────────────────────────────
+A6. REQUESTS.SESSION SENZA RETRY ADAPTER
+────────────────────────────────────────────────────────────────
+File coinvolti: searcher.py
+
+Problema: self._session = requests.Session() non ha un retry
+adapter configurato. In caso di connessione persa o errore
+temporaneo di rete, il retry è gestito manualmente con il ciclo
+for attempt in range(RETRIES) in _get, ma solo per eccezioni
+RequestException. Errori di connessione a basso livello (timeout
+TCP, reset) possono non essere intercettati correttamente.
+
+Fix consigliato: aggiungere un HTTPAdapter con Retry in __init__:
+  from requests.adapters import HTTPAdapter
+  from urllib3.util.retry import Retry
+  adapter = HTTPAdapter(max_retries=Retry(
+      total=RETRIES,
+      backoff_factor=1,
+      status_forcelist=[500, 502, 503, 504],
+  ))
+  self._session.mount("https://", adapter)
+  self._session.mount("http://", adapter)
+
+In questo modo il retry a livello di connessione è gestito da
+urllib3 automaticamente, e il ciclo manuale in _get può essere
+semplificato o rimosso.
+
+────────────────────────────────────────────────────────────────
+A7. FILENAME FINALE MP3 COSTRUITO MANUALMENTE
+────────────────────────────────────────────────────────────────
+File coinvolti: downloader.py → _do_download e download
+
+Problema: il path finale dell'mp3 viene costruito manualmente:
+  final_path = str(Path(destination) / f"{safe}.mp3")
+Ma yt-dlp potrebbe generare un filename leggermente diverso
+(es. caratteri sanitizzati diversamente, estensione diversa in
+casi edge). Il metodo download ritorna final_path che potrebbe
+non esistere su disco se yt-dlp ha usato un nome diverso.
+
+Il controllo "già esiste" in _download_single usa questo path:
+  if Path(dest, f"{filename}.mp3").exists(): ...
+Se il path non corrisponde, il file viene riscaricato ogni volta
+anche se già presente.
+
+Fix: dopo il download, cercare il file effettivo con glob:
+  import glob
+  matches = glob.glob(str(Path(destination) / f"{safe}.*"))
+  final_path = matches[0] if matches else None
+Oppure usare i progress hook di yt-dlp che forniscono il filename
+reale nel campo "filename" quando status == "finished".
+
+════════════════════════════════════════════════════════════════
+SEZIONE B — PROBLEMI ARCHITETTURALI (da valutare in futuro)
+════════════════════════════════════════════════════════════════
+
+1. Classe troppo grande
+
+MusicDownloaderApp ≈ 2000 righe
+
+Responsabilità multiple:
+
+UI
+orchestrazione download
+pipeline workers
+cache orchestration
+navigazione
+business logic
+
+Meglio separare.
+
+Consigliato:
+
+DownloadManager
+SearchController
+QueueManager
+UIController
+
+2. Troppa logica nei callback UI
+
+Esempio:
+
+def _download_albums_batch
+
+fa:
+
+API
+filesystem
+queue building
+UI
+
+Dovrebbe delegare.
+
+3. Mancanza rate limiting API
+
+Se l'utente fa molte ricerche:
+
+search_artist
+search_track
+get_album_tracks
+get_album_details
+
+potresti saturare l'API.
+
+Meglio aggiungere:
+
+Semaphore
+RateLimiter
+
+4. Cache non limitata
+
+self._genre_cache
+self._nb_tracks_cache
+
+crescono senza limite.
+
+Meglio:
+
+LRU cache
+max size
+
+5. Possibile memory leak widget
+
+In _show_download_panel:
+
+for w in self.queue_panel.winfo_children():
+    w.destroy()
+
+funziona, ma molte ricreazioni possono frammentare UI.
+
+Meglio riusare alcuni widget.
+
+6. Piccola inefficienza nella queue
+
+Controllo duplicati:
+
+if any(item.query == query for item in self.download_queue)
+
+O(n).
+
+Meglio:
+
+set queries
 
 FINE DOCUMENTO
