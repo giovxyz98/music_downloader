@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import customtkinter as ctk
 import threading
 from queue import Queue
 import logging
@@ -18,6 +19,9 @@ from typing import Dict, List, Optional
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC, ID3NoHeaderError
 from rapidfuzz import fuzz
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
 # ─────────────────────────────────────────────────────────────
 # Palette
@@ -105,11 +109,12 @@ class MusicSearcher:
 
     def _get(self, url: str, params: Optional[Dict] = None) -> Dict:
         time.sleep(0.1)
+        logger.debug(f"[Deezer] GET {url} params={params}")
         for attempt in range(RETRIES):
             try:
                 r = self._session.get(url, params=params, timeout=10)
                 if not r.ok:
-                    logger.warning(f"[MusicSearcher] HTTP {r.status_code} per {url}: {r.text[:300]}")
+                    logger.warning(f"[Deezer] HTTP {r.status_code} per {url}: {r.text[:300]}")
                 r.raise_for_status()
                 data = r.json()
                 if "error" in data:
@@ -118,13 +123,14 @@ class MusicSearcher:
                     )
                 return data
             except requests.RequestException as e:
-                logger.warning(f"[MusicSearcher] Tentativo {attempt+1}/{RETRIES} fallito: {e}")
+                logger.warning(f"[Deezer] Tentativo {attempt+1}/{RETRIES} fallito: {e}")
                 if attempt == RETRIES - 1:
                     raise RuntimeError(f"Richiesta fallita dopo {RETRIES} tentativi: {e}")
                 time.sleep(1 * (2 ** attempt))
 
     def search_artist(self, name: str) -> List[Dict]:
         if name in self._artist_cache:
+            logger.debug(f"[Deezer] Cache hit artista: {name}")
             return self._artist_cache[name]
         data = self._get(f"{self.BASE}/search/artist", {"q": name, "limit": DEEZER_ARTIST_LIMIT})
         result = [
@@ -142,6 +148,7 @@ class MusicSearcher:
 
     def search_track(self, query: str) -> List[Dict]:
         if query in self._search_cache:
+            logger.debug(f"[Deezer] Cache hit canzone: {query}")
             return self._search_cache[query]
         data = self._get(f"{self.BASE}/search/track", {"q": query, "limit": DEEZER_TRACK_LIMIT})
         result = [
@@ -162,6 +169,7 @@ class MusicSearcher:
     def get_artist_albums(self, artist_id: str) -> List[Dict]:
         key = str(artist_id)
         if key in self._album_cache:
+            logger.debug(f"[Deezer] Cache hit album artista: {artist_id}")
             return self._album_cache[key]
         url = f"{self.BASE}/artist/{artist_id}/albums"
         albums, seen = [], set()
@@ -184,6 +192,7 @@ class MusicSearcher:
     def get_album_tracks(self, album_id: str) -> List[Dict]:
         key = str(album_id)
         if key in self._track_cache:
+            logger.debug(f"[Deezer] Cache hit tracce album: {album_id}")
             return self._track_cache[key]
         data = self._get(f"{self.BASE}/album/{album_id}/tracks")
         result = [
@@ -260,20 +269,27 @@ class AudioDownloader:
     @staticmethod
     def search_youtube(query: str, artist: str = "", title: str = "",
                        duration: int = 0) -> List[str]:
+        logger.debug(f"[YouTube] Ricerca: '{query}' (artista='{artist}', titolo='{title}', durata={duration}s)")
         try:
             with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as ydl:
                 results = ydl.extract_info(f"ytsearch{YOUTUBE_RESULTS}:{query}", download=False)
             entries = [e for e in (results.get("entries") or []) if e]
             if not entries:
+                logger.warning(f"[YouTube] Nessun risultato per: '{query}'")
                 return []
             scored = sorted(
                 entries,
                 key=lambda e: AudioDownloader._score(e, artist, title, duration),
                 reverse=True,
             )
-            return [e["url"] for e in scored]
+            for e in scored:
+                score = AudioDownloader._score(e, artist, title, duration)
+                logger.debug(f"[YouTube] Score={score:3d}  canale='{e.get('uploader', '?')}'  titolo='{e.get('title', '?')[:60]}'")
+            urls = [e["url"] for e in scored]
+            logger.debug(f"[YouTube] {len(urls)} risultati, primo URL: {urls[0] if urls else 'nessuno'}")
+            return urls
         except Exception as e:
-            logger.error(f"[AudioDownloader] Errore ricerca '{query}': {e}")
+            logger.error(f"[YouTube] Errore ricerca '{query}': {e}")
         return []
 
     @staticmethod
@@ -302,11 +318,12 @@ class AudioDownloader:
                 "preferredcodec": "mp3",
                 "preferredquality": PREFERRED_QUALITY,
             }],
-            "noplaylist":     True,
-            "quiet":          True,
-            "progress_hooks": [_hook],
-            "socket_timeout": SOCKET_TIMEOUT,
-            "retries":        RETRIES,
+            "noplaylist":                    True,
+            "quiet":                         True,
+            "progress_hooks":                [_hook],
+            "socket_timeout":                SOCKET_TIMEOUT,
+            "retries":                       RETRIES,
+            "concurrent_fragment_downloads": 3,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -375,7 +392,12 @@ class CacheManager:
         self.save()
 
     def get_youtube_urls(self, query: str) -> List[str]:
-        return self.data["youtube_cache"].get(query, [])
+        cached = self.data["youtube_cache"].get(query, [])
+        if cached:
+            logger.debug(f"[Cache] YouTube hit: '{query}'")
+        else:
+            logger.debug(f"[Cache] YouTube miss: '{query}'")
+        return cached
 
     def set_youtube_urls(self, query: str, urls: List[str]):
         self.data["youtube_cache"][query] = urls
@@ -413,12 +435,12 @@ class MusicDownloaderApp:
 
     SORT_OPTIONS = ["Nome A→Z", "Nome Z→A", "Anno ↑", "Anno ↓"]
 
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: ctk.CTk):
         self.root = root
         self.root.title("Music Downloader")
         self.root.geometry("1020x660")
         self.root.resizable(True, True)
-        self.root.configure(bg=BG)
+        self.root.configure(fg_color=BG)
 
         self._setup_style()
 
@@ -431,47 +453,29 @@ class MusicDownloaderApp:
         self.current_albums:   list = []
         self.filtered_albums:  list = []
         self.current_tracks:   list = []
-        self._genre_cache:     dict = {}   # album_id → genre str
-        self._nb_tracks_cache: dict = {}   # album_id → int
-        self._cover_cache:     dict = {}   # album_id → cover_xl url
+        self._genre_cache:     dict = {}
+        self._nb_tracks_cache: dict = {}
+        self._cover_cache:     dict = {}
 
-        # Widget del pannello download (impostati durante il download)
-        self._dl_active_frame: tk.Frame        = None
-        self._dl_done_listbox: tk.Listbox      = None
-        self._dl_general_bar:  ttk.Progressbar = None
-        self._dl_general_var:  tk.StringVar    = None
-        self._track_widgets:   dict            = {}  # item_id → (frame, bar)
-        self._cancel_event:    threading.Event = threading.Event()
+        self._dl_active_frame:  ctk.CTkFrame       = None
+        self._dl_done_listbox:  tk.Listbox          = None
+        self._dl_general_bar:   ctk.CTkProgressBar  = None
+        self._dl_general_label: ctk.CTkLabel        = None
+        self._dl_total:         int                 = 0
+        self._track_widgets:    dict                = {}
+        self._cancel_event:     threading.Event     = threading.Event()
 
         self._setup_menubar()
         self._build_layout()
         self._show_search()
+
+        logger.info(f"[App] Avvio — yt-dlp={yt_dlp.version.__version__}, requests={requests.__version__}")
 
     # ── Stile ────────────────────────────────────────────────
 
     def _setup_style(self):
         s = ttk.Style(self.root)
         s.theme_use("clam")
-
-        s.configure(".", background=BG, foreground=TEXT, font=("Segoe UI", 10))
-        s.configure("TFrame",  background=BG)
-        s.configure("TLabel",  background=BG, foreground=TEXT)
-
-        s.configure("Accent.TButton", background=ACCENT, foreground=TEXT,
-                    font=("Segoe UI", 10, "bold"), borderwidth=0,
-                    focusthickness=0, padding=(14, 7))
-        s.map("Accent.TButton",
-              background=[("active", ACCENT2), ("disabled", CARD)],
-              foreground=[("disabled", SUBTEXT)])
-
-        s.configure("Ghost.TButton", background=PANEL, foreground=SUBTEXT,
-                    font=("Segoe UI", 9), borderwidth=0, focusthickness=0, padding=(10, 5))
-        s.map("Ghost.TButton",
-              background=[("active", CARD)],
-              foreground=[("active", TEXT)])
-
-        s.configure("TEntry", fieldbackground=PANEL, foreground=TEXT,
-                    insertcolor=TEXT, borderwidth=0, padding=(8, 6))
 
         s.configure("Music.Treeview", background=PANEL, foreground=TEXT,
                     fieldbackground=PANEL, borderwidth=0, rowheight=30,
@@ -482,20 +486,6 @@ class MusicDownloaderApp:
         s.map("Music.Treeview",
               background=[("selected", ACCENT)],
               foreground=[("selected", TEXT)])
-
-        s.configure("Music.Horizontal.TProgressbar", background=ACCENT,
-                    troughcolor=CARD, borderwidth=0, thickness=6)
-
-        s.configure("TRadiobutton", background=BG, foreground=TEXT, font=("Segoe UI", 10))
-        s.map("TRadiobutton", background=[("active", BG)], foreground=[("active", TEXT)])
-
-        s.configure("TCombobox", fieldbackground=PANEL, background=PANEL,
-                    foreground=TEXT, arrowcolor=SUBTEXT, borderwidth=0)
-        s.map("TCombobox",
-              fieldbackground=[("readonly", PANEL)],
-              foreground=[("readonly", TEXT)],
-              selectbackground=[("readonly", PANEL)],
-              selectforeground=[("readonly", TEXT)])
 
         s.configure("TScrollbar", background=CARD, troughcolor=PANEL,
                     borderwidth=0, arrowsize=12, arrowcolor=SUBTEXT)
@@ -560,25 +550,28 @@ class MusicDownloaderApp:
     # ── Layout principale ────────────────────────────────────
 
     def _build_layout(self):
-        self.nav_frame = tk.Frame(self.root, bg=BG)
+        self.nav_frame = ctk.CTkFrame(self.root, fg_color=BG)
         self.nav_frame.pack(side="left", fill="both", expand=True, padx=(16, 8), pady=16)
 
         tk.Frame(self.root, width=1, bg=BORDER).pack(side="left", fill="y", pady=8)
 
-        self.queue_panel = tk.Frame(self.root, bg=PANEL, width=285)
+        self.queue_panel = ctk.CTkFrame(self.root, fg_color=PANEL, width=285)
         self.queue_panel.pack(side="right", fill="y", padx=(8, 16), pady=16)
         self.queue_panel.pack_propagate(False)
         self._build_queue_panel()
 
     def _build_queue_panel(self):
-        tk.Label(self.queue_panel, text="Coda download",
-                 font=("Segoe UI", 13, "bold"), bg=PANEL, fg=TEXT).pack(pady=(14, 2))
+        ctk.CTkLabel(self.queue_panel, text="Coda download",
+                     font=("Segoe UI", 13, "bold"),
+                     fg_color="transparent", text_color=TEXT).pack(pady=(14, 2))
 
-        self.queue_count_var = tk.StringVar(value="0 canzoni")
-        tk.Label(self.queue_panel, textvariable=self.queue_count_var,
-                 fg=SUBTEXT, font=("Segoe UI", 9), bg=PANEL).pack()
-        tk.Label(self.queue_panel, text="Doppio click per rimuovere",
-                 fg=SUBTEXT, font=("Segoe UI", 8), bg=PANEL).pack(pady=(0, 6))
+        self.queue_count_label = ctk.CTkLabel(self.queue_panel, text="0 canzoni",
+                                              fg_color="transparent",
+                                              text_color=SUBTEXT, font=("Segoe UI", 9))
+        self.queue_count_label.pack()
+        ctk.CTkLabel(self.queue_panel, text="Doppio click per rimuovere",
+                     fg_color="transparent",
+                     text_color=SUBTEXT, font=("Segoe UI", 8)).pack(pady=(0, 6))
 
         list_frame = tk.Frame(self.queue_panel, bg=PANEL)
         list_frame.pack(fill="both", expand=True, padx=10)
@@ -595,59 +588,52 @@ class MusicDownloaderApp:
         sb.config(command=self.queue_listbox.yview)
         self.queue_listbox.bind("<Double-Button-1>", self._remove_on_dclick)
 
-        btn_frame = tk.Frame(self.queue_panel, bg=PANEL)
+        btn_frame = ctk.CTkFrame(self.queue_panel, fg_color=PANEL)
         btn_frame.pack(fill="x", padx=10, pady=4)
-        ttk.Button(btn_frame, text="Rimuovi selezionati",
-                   command=self._remove_from_queue, style="Ghost.TButton").pack(fill="x", pady=2)
-        ttk.Button(btn_frame, text="Svuota coda",
-                   command=self._clear_queue, style="Ghost.TButton").pack(fill="x", pady=2)
+        ctk.CTkButton(btn_frame, text="Rimuovi selezionati",
+                      command=self._remove_from_queue,
+                      fg_color=PANEL, hover_color=CARD, text_color=SUBTEXT,
+                      font=("Segoe UI", 9), corner_radius=6).pack(fill="x", pady=2)
+        ctk.CTkButton(btn_frame, text="Svuota coda",
+                      command=self._clear_queue,
+                      fg_color=PANEL, hover_color=CARD, text_color=SUBTEXT,
+                      font=("Segoe UI", 9), corner_radius=6).pack(fill="x", pady=2)
 
-        self.btn_download = ttk.Button(
+        self.btn_download = ctk.CTkButton(
             self.queue_panel, text="Scarica tutto",
-            command=self._start_download, style="Accent.TButton", state="disabled"
+            command=self._start_download,
+            fg_color=ACCENT, hover_color=ACCENT2, text_color=TEXT,
+            font=("Segoe UI", 10, "bold"), corner_radius=6, state="disabled"
         )
         self.btn_download.pack(fill="x", padx=10, pady=(6, 12))
 
     # ── Pannello download ────────────────────────────────────
 
     def _show_download_panel(self, queue: list):
-        """Sostituisce il contenuto del queue_panel con la lista completa delle tracce."""
         total = len(queue)
+        self._dl_total = total
         for w in self.queue_panel.winfo_children():
             w.destroy()
 
-        tk.Label(self.queue_panel, text="Download in corso",
-                 font=("Segoe UI", 11, "bold"), bg=PANEL, fg=TEXT).pack(pady=(12, 2))
+        ctk.CTkLabel(self.queue_panel, text="Download in corso",
+                     font=("Segoe UI", 11, "bold"),
+                     fg_color="transparent", text_color=TEXT).pack(pady=(12, 2))
 
-        self._dl_general_var = tk.StringVar(value=f"0 / {total}")
-        tk.Label(self.queue_panel, textvariable=self._dl_general_var,
-                 font=("Segoe UI", 8), bg=PANEL, fg=SUBTEXT).pack()
+        self._dl_general_label = ctk.CTkLabel(self.queue_panel, text=f"0 / {total}",
+                                               font=("Segoe UI", 8),
+                                               fg_color="transparent", text_color=SUBTEXT)
+        self._dl_general_label.pack()
 
-        # Lista scorrevole con tutte le tracce pre-popolate
-        list_frame = tk.Frame(self.queue_panel, bg=PANEL)
+        list_frame = ctk.CTkFrame(self.queue_panel, fg_color=PANEL)
         list_frame.pack(fill="both", expand=True, padx=6, pady=(6, 4))
 
-        canvas = tk.Canvas(list_frame, bg=PANEL, highlightthickness=0)
-        sb = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
-        inner = tk.Frame(canvas, bg=PANEL)
-        inner.bind("<Configure>",
-                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas_win = canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.bind("<Configure>",
-                    lambda e, cw=canvas_win: canvas.itemconfig(cw, width=e.width))
-        canvas.configure(yscrollcommand=sb.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-
-        def _on_wheel(e):
-            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_wheel)
-        self._dl_mousewheel_cb = _on_wheel  # salvato per unbind
+        scroll_frame = ctk.CTkScrollableFrame(list_frame, fg_color=PANEL)
+        scroll_frame.pack(fill="both", expand=True)
 
         self._track_widgets = {}
         for item in queue:
             item_id = id(item)
-            row = tk.Frame(inner, bg=PANEL)
+            row = ctk.CTkFrame(scroll_frame, fg_color=PANEL)
             row.pack(fill="x", pady=1, padx=2)
 
             status_var = tk.StringVar(value="○")
@@ -656,73 +642,66 @@ class MusicDownloaderApp:
 
             lbl = item["label"]
             short = lbl[:24] + "…" if len(lbl) > 24 else lbl
-            tk.Label(row, text=short, font=("Segoe UI", 8),
-                     bg=PANEL, fg=TEXT, anchor="w").pack(
-                         side="left", fill="x", expand=True, padx=(2, 4))
+            ctk.CTkLabel(row, text=short, font=("Segoe UI", 8),
+                         fg_color="transparent", text_color=TEXT,
+                         anchor="w").pack(side="left", fill="x", expand=True, padx=(2, 4))
 
-            bar = ttk.Progressbar(row, orient="horizontal", maximum=100,
-                                   mode="determinate",
-                                   style="Music.Horizontal.TProgressbar", length=55)
+            bar = ctk.CTkProgressBar(row, orientation="horizontal",
+                                     progress_color=ACCENT, fg_color=CARD,
+                                     width=55, height=6)
+            bar.set(0)
             bar.pack(side="right")
 
             self._track_widgets[item_id] = (bar, status_var)
 
-        # Barra progresso generale + annulla
-        bottom = tk.Frame(self.queue_panel, bg=PANEL)
+        bottom = ctk.CTkFrame(self.queue_panel, fg_color=PANEL)
         bottom.pack(fill="x", padx=8, pady=(4, 4))
-        self._dl_general_bar = ttk.Progressbar(
-            bottom, orient="horizontal", maximum=total,
-            mode="determinate", style="Music.Horizontal.TProgressbar"
+        self._dl_general_bar = ctk.CTkProgressBar(
+            bottom, orientation="horizontal",
+            progress_color=ACCENT, fg_color=CARD
         )
+        self._dl_general_bar.set(0)
         self._dl_general_bar.pack(fill="x", pady=2)
 
-        ttk.Button(self.queue_panel, text="Annulla download",
-                   command=self._cancel_event.set,
-                   style="Ghost.TButton").pack(fill="x", padx=8, pady=(2, 8))
+        ctk.CTkButton(self.queue_panel, text="Annulla download",
+                      command=self._cancel_event.set,
+                      fg_color=PANEL, hover_color=CARD, text_color=SUBTEXT,
+                      font=("Segoe UI", 9), corner_radius=6).pack(fill="x", padx=8, pady=(2, 8))
 
         self._dl_active_frame = None
         self._dl_done_listbox = None
 
     def _track_started(self, item: dict, item_id: int):
-        """Marca la traccia come attiva (▶) nella lista pre-popolata."""
         widgets = self._track_widgets.get(item_id)
         if widgets:
             widgets[1].set("▶")
 
     def _update_track_progress(self, item_id: int, percent: float):
-        """Aggiorna la barra della traccia in corso."""
         widgets = self._track_widgets.get(item_id)
         if widgets:
-            widgets[0]["value"] = percent
+            widgets[0].set(percent / 100)
 
     def _track_completed(self, item: dict, item_id: int, ok: bool,
                          completed: int, total: int):
-        """Aggiorna icona e barra al completamento della traccia."""
         widgets = self._track_widgets.get(item_id)
         if widgets:
             bar, status_var = widgets
-            bar["value"] = 100 if ok else 0
+            bar.set(1.0 if ok else 0.0)
             status_var.set("✓" if ok else "✗")
 
-        if self._dl_general_var is not None:
-            self._dl_general_var.set(f"{completed} / {total}")
-        if self._dl_general_bar is not None:
-            self._dl_general_bar["value"] = completed
+        if self._dl_general_label is not None:
+            self._dl_general_label.configure(text=f"{completed} / {total}")
+        if self._dl_general_bar is not None and total > 0:
+            self._dl_general_bar.set(completed / total)
 
     def _restore_queue_panel(self):
-        """Ripristina il pannello coda normale dopo il download."""
-        if hasattr(self, "_dl_mousewheel_cb") and self._dl_mousewheel_cb:
-            try:
-                self.queue_panel.unbind_all("<MouseWheel>")
-            except Exception:
-                pass
-            self._dl_mousewheel_cb = None
         for w in self.queue_panel.winfo_children():
             w.destroy()
         self._dl_active_frame  = None
         self._dl_done_listbox  = None
         self._dl_general_bar   = None
-        self._dl_general_var   = None
+        self._dl_general_label = None
+        self._dl_total         = 0
         self._track_widgets    = {}
         self._build_queue_panel()
 
@@ -733,15 +712,16 @@ class MusicDownloaderApp:
             w.destroy()
 
     def _nav_title(self, text, sub=None):
-        tk.Label(self.nav_frame, text=text, font=("Segoe UI", 16, "bold"),
-                 bg=BG, fg=TEXT).pack(pady=(16, 2))
+        ctk.CTkLabel(self.nav_frame, text=text, font=("Segoe UI", 16, "bold"),
+                     fg_color="transparent", text_color=TEXT).pack(pady=(16, 2))
         if sub:
-            tk.Label(self.nav_frame, text=sub, font=("Segoe UI", 10),
-                     bg=BG, fg=SUBTEXT).pack(pady=(0, 10))
+            ctk.CTkLabel(self.nav_frame, text=sub, font=("Segoe UI", 10),
+                         fg_color="transparent", text_color=SUBTEXT).pack(pady=(0, 10))
 
     def _back_btn(self, text, cmd):
-        ttk.Button(self.nav_frame, text=text, command=cmd,
-                   style="Ghost.TButton").pack(pady=(8, 0))
+        ctk.CTkButton(self.nav_frame, text=text, command=cmd,
+                      fg_color=PANEL, hover_color=CARD, text_color=SUBTEXT,
+                      font=("Segoe UI", 9), corner_radius=6).pack(pady=(8, 0))
 
     # ── Schermata: Ricerca ───────────────────────────────────
 
@@ -750,44 +730,50 @@ class MusicDownloaderApp:
         self._nav_title("Music Downloader")
 
         self.search_mode = tk.StringVar(value="artista")
-        mode_row = tk.Frame(self.nav_frame, bg=BG)
+        mode_row = ctk.CTkFrame(self.nav_frame, fg_color=BG)
         mode_row.pack(pady=(0, 10))
-        ttk.Radiobutton(mode_row, text="Artista", variable=self.search_mode,
-                        value="artista").pack(side="left", padx=14)
-        ttk.Radiobutton(mode_row, text="Canzone", variable=self.search_mode,
-                        value="canzone").pack(side="left", padx=14)
+        ctk.CTkRadioButton(mode_row, text="Artista", variable=self.search_mode,
+                           value="artista", text_color=TEXT, fg_color=ACCENT,
+                           hover_color=ACCENT2).pack(side="left", padx=14)
+        ctk.CTkRadioButton(mode_row, text="Canzone", variable=self.search_mode,
+                           value="canzone", text_color=TEXT, fg_color=ACCENT,
+                           hover_color=ACCENT2).pack(side="left", padx=14)
 
-        search_row = tk.Frame(self.nav_frame, bg=BG)
+        search_row = ctk.CTkFrame(self.nav_frame, fg_color=BG)
         search_row.pack()
         self.search_var = tk.StringVar()
-        entry = ttk.Entry(search_row, textvariable=self.search_var,
-                          width=34, font=("Segoe UI", 12))
+        entry = ctk.CTkEntry(search_row, textvariable=self.search_var,
+                             width=280, font=("Segoe UI", 12),
+                             fg_color=PANEL, text_color=TEXT,
+                             border_color=BORDER, border_width=1)
         entry.pack(side="left", padx=(0, 8))
         entry.bind("<Return>", lambda _: self._do_search())
         entry.focus()
-        ttk.Button(search_row, text="Cerca", command=self._do_search,
-                   style="Accent.TButton").pack(side="left")
+        ctk.CTkButton(search_row, text="Cerca", command=self._do_search,
+                      fg_color=ACCENT, hover_color=ACCENT2, text_color=TEXT,
+                      font=("Segoe UI", 10, "bold"), corner_radius=6).pack(side="left")
 
-        self.search_status = tk.Label(self.nav_frame, text="",
-                                      fg=SUBTEXT, font=("Segoe UI", 10), bg=BG)
+        self.search_status = ctk.CTkLabel(self.nav_frame, text="",
+                                          fg_color="transparent",
+                                          text_color=SUBTEXT, font=("Segoe UI", 10))
         self.search_status.pack(pady=6)
 
-        # Ricerche recenti
         recenti = self.cache.get_recent_searches(RECENT_SEARCHES_SHOWN)
         if recenti:
-            tk.Label(self.nav_frame, text="Ricerche recenti",
-                     font=("Segoe UI", 9, "bold"), bg=BG, fg=SUBTEXT).pack(pady=(8, 2))
-            rec_frame = tk.Frame(self.nav_frame, bg=BG)
+            ctk.CTkLabel(self.nav_frame, text="Ricerche recenti",
+                         font=("Segoe UI", 9, "bold"),
+                         fg_color="transparent", text_color=SUBTEXT).pack(pady=(8, 2))
+            rec_frame = ctk.CTkFrame(self.nav_frame, fg_color=BG)
             rec_frame.pack()
             for s in recenti:
                 tipo_label = "[A]" if s["type"] == "artista" else "[C]"
-                btn = ttk.Button(
+                ctk.CTkButton(
                     rec_frame,
                     text=f"{tipo_label} {s['query']}",
-                    style="Ghost.TButton",
+                    fg_color=PANEL, hover_color=CARD, text_color=SUBTEXT,
+                    font=("Segoe UI", 9), corner_radius=6,
                     command=lambda q=s["query"], t=s["type"]: self._run_recent(q, t),
-                )
-                btn.pack(fill="x", pady=1)
+                ).pack(fill="x", pady=1)
 
     def _run_recent(self, query: str, tipo: str):
         self.search_mode.set(tipo)
@@ -798,7 +784,7 @@ class MusicDownloaderApp:
         query = self.search_var.get().strip()
         if not query:
             return
-        self.search_status.config(text="Ricerca in corso...", fg=SUBTEXT)
+        self.search_status.configure(text="Ricerca in corso...", text_color=SUBTEXT)
         self.root.update()
         if self.search_mode.get() == "canzone":
             self._do_track_search(query)
@@ -810,10 +796,10 @@ class MusicDownloaderApp:
             try:
                 artists = self.searcher.search_artist(query)
             except Exception as e:
-                self.root.after(0, lambda: self.search_status.config(text=f"Errore: {e}", fg=ERROR))
+                self.root.after(0, lambda: self.search_status.configure(text=f"Errore: {e}", text_color=ERROR))
                 return
             if not artists:
-                self.root.after(0, lambda: self.search_status.config(text="Nessun artista trovato.", fg=ERROR))
+                self.root.after(0, lambda: self.search_status.configure(text="Nessun artista trovato.", text_color=ERROR))
                 return
             self.cache.add_search("artista", query)
             if len(artists) == 1:
@@ -828,10 +814,10 @@ class MusicDownloaderApp:
             try:
                 tracks = self.searcher.search_track(query)
             except Exception as e:
-                self.root.after(0, lambda: self.search_status.config(text=f"Errore: {e}", fg=ERROR))
+                self.root.after(0, lambda: self.search_status.configure(text=f"Errore: {e}", text_color=ERROR))
                 return
             if not tracks:
-                self.root.after(0, lambda: self.search_status.config(text="Nessuna canzone trovata.", fg=ERROR))
+                self.root.after(0, lambda: self.search_status.configure(text="Nessuna canzone trovata.", text_color=ERROR))
                 return
             self.cache.add_search("canzone", query)
             self.root.after(0, self._show_track_results, tracks)
@@ -933,13 +919,14 @@ class MusicDownloaderApp:
     # ── Schermata: Album ─────────────────────────────────────
 
     def _build_filter_sort_controls(self, parent) -> tuple:
-        """Crea la riga filtro + ordinamento. Restituisce (filter_var, sort_var)."""
-        controls = tk.Frame(parent, bg=BG)
+        controls = ctk.CTkFrame(parent, fg_color=BG)
         controls.pack(fill="x", pady=(0, 6))
 
         filter_var   = tk.StringVar()
-        filter_entry = ttk.Entry(controls, textvariable=filter_var,
-                                 font=("Segoe UI", 10), width=26)
+        filter_entry = ctk.CTkEntry(controls, textvariable=filter_var,
+                                    font=("Segoe UI", 10), width=210,
+                                    fg_color=PANEL, text_color=TEXT,
+                                    border_color=BORDER, border_width=1)
         filter_entry.pack(side="left", padx=(0, 10))
         filter_entry.insert(0, "Filtra album...")
 
@@ -953,24 +940,24 @@ class MusicDownloaderApp:
         filter_entry.bind("<FocusIn>",  on_focus_in)
         filter_entry.bind("<FocusOut>", on_focus_out)
 
-        tk.Label(controls, text="Ordina:", fg=SUBTEXT,
-                 font=("Segoe UI", 9), bg=BG).pack(side="left")
+        ctk.CTkLabel(controls, text="Ordina:", fg_color="transparent",
+                     text_color=SUBTEXT, font=("Segoe UI", 9)).pack(side="left")
 
         sort_var = tk.StringVar(value=self.SORT_OPTIONS[0])
-        ttk.Combobox(controls, textvariable=sort_var, values=self.SORT_OPTIONS,
-                     state="readonly", width=11,
-                     font=("Segoe UI", 9)).pack(side="left", padx=(4, 0))
+        ctk.CTkComboBox(controls, variable=sort_var, values=self.SORT_OPTIONS,
+                        state="readonly", width=130, font=("Segoe UI", 9),
+                        fg_color=PANEL, text_color=TEXT,
+                        button_color=PANEL, button_hover_color=CARD,
+                        dropdown_fg_color=PANEL, dropdown_text_color=TEXT,
+                        border_color=BORDER, border_width=1).pack(side="left", padx=(4, 0))
 
         return filter_var, sort_var
 
     def _bind_album_context_menu(self):
-        """Collega il menu contestuale (tasto destro) alla listbox degli album."""
         def show_menu(event):
             idx = self.albums_lb.nearest(event.y)
             if idx < 0 or idx >= len(self.filtered_albums):
                 return
-            # Se il click è su un elemento già selezionato, mantieni la selezione multipla;
-            # altrimenti resetta e seleziona solo quello cliccato.
             if idx not in self.albums_lb.curselection():
                 self.albums_lb.selection_clear(0, tk.END)
                 self.albums_lb.selection_set(idx)
@@ -1003,29 +990,30 @@ class MusicDownloaderApp:
         self._clear_nav()
         self._nav_title(f"Album di {self.current_artist['nome']}")
 
-        status = tk.Label(self.nav_frame, text="Caricamento album...",
-                          fg=SUBTEXT, font=("Segoe UI", 10), bg=BG)
+        status = ctk.CTkLabel(self.nav_frame, text="Caricamento album...",
+                              fg_color="transparent",
+                              text_color=SUBTEXT, font=("Segoe UI", 10))
         status.pack()
 
         def _fetch():
             try:
                 albums = self.searcher.get_artist_albums(self.current_artist["id"])
             except Exception as e:
-                self.root.after(0, lambda: status.config(text=f"Errore: {e}", fg=ERROR))
+                self.root.after(0, lambda: status.configure(text=f"Errore: {e}", text_color=ERROR))
                 return
             self.root.after(0, lambda: self._finish_show_albums(albums, status))
 
         threading.Thread(target=_fetch, daemon=True).start()
 
-    def _finish_show_albums(self, albums: list, status_label: tk.Label):
+    def _finish_show_albums(self, albums: list, status_label: ctk.CTkLabel):
         status_label.destroy()
         self.current_albums = albums
 
-        tk.Label(self.nav_frame,
-                 text=f"{len(self.current_albums)} album trovati  —  doppio click per vedere le tracce",
-                 fg=SUBTEXT, font=("Segoe UI", 9), bg=BG).pack(pady=(0, 6))
+        ctk.CTkLabel(self.nav_frame,
+                     text=f"{len(self.current_albums)} album trovati  —  doppio click per vedere le tracce",
+                     fg_color="transparent",
+                     text_color=SUBTEXT, font=("Segoe UI", 9)).pack(pady=(0, 6))
 
-        # Lista album
         list_frame = tk.Frame(self.nav_frame, bg=BG)
         list_frame.pack(fill="both", expand=True)
         sb = ttk.Scrollbar(list_frame)
@@ -1084,26 +1072,28 @@ class MusicDownloaderApp:
         self._nav_title(album["nome"],
                         f"{self.current_artist['nome']}  •  {album['anno']}")
 
-        status = tk.Label(self.nav_frame, text="Caricamento tracce...",
-                          fg=SUBTEXT, font=("Segoe UI", 10), bg=BG)
+        status = ctk.CTkLabel(self.nav_frame, text="Caricamento tracce...",
+                              fg_color="transparent",
+                              text_color=SUBTEXT, font=("Segoe UI", 10))
         status.pack(pady=4)
 
         def _fetch():
             try:
                 tracks = self.searcher.get_album_tracks(album["id"])
             except Exception as e:
-                self.root.after(0, lambda: status.config(text=f"Errore: {e}", fg=ERROR))
+                self.root.after(0, lambda: status.configure(text=f"Errore: {e}", text_color=ERROR))
                 return
             self.root.after(0, lambda: self._finish_show_tracks(tracks, album, status))
 
         threading.Thread(target=_fetch, daemon=True).start()
 
-    def _finish_show_tracks(self, tracks: list, album: dict, status_label: tk.Label):
+    def _finish_show_tracks(self, tracks: list, album: dict, status_label: ctk.CTkLabel):
         status_label.destroy()
         self.current_tracks = tracks
 
-        tk.Label(self.nav_frame, text="Doppio click per aggiungere alla coda",
-                 fg=SUBTEXT, font=("Segoe UI", 9), bg=BG).pack(pady=(0, 6))
+        ctk.CTkLabel(self.nav_frame, text="Doppio click per aggiungere alla coda",
+                     fg_color="transparent",
+                     text_color=SUBTEXT, font=("Segoe UI", 9)).pack(pady=(0, 6))
 
         f, tree = _scrolled_tree(self.nav_frame,
                                   columns=("num", "titolo", "artista"),
@@ -1145,17 +1135,20 @@ class MusicDownloaderApp:
 
         tree.bind("<Button-3>", show_track_menu)
 
-        btn_row = tk.Frame(self.nav_frame, bg=BG)
+        btn_row = ctk.CTkFrame(self.nav_frame, fg_color=BG)
         btn_row.pack(pady=10)
-        ttk.Button(btn_row, text="+ Aggiungi tutto l'album",
-                   command=lambda: self._add_all_tracks(album),
-                   style="Accent.TButton").pack(side="left", padx=4)
-        ttk.Button(btn_row, text="← Torna agli album",
-                   command=self._show_albums,
-                   style="Ghost.TButton").pack(side="left", padx=4)
-        ttk.Button(btn_row, text="Nuova ricerca",
-                   command=self._show_search,
-                   style="Ghost.TButton").pack(side="left", padx=4)
+        ctk.CTkButton(btn_row, text="+ Aggiungi tutto l'album",
+                      command=lambda: self._add_all_tracks(album),
+                      fg_color=ACCENT, hover_color=ACCENT2, text_color=TEXT,
+                      font=("Segoe UI", 10, "bold"), corner_radius=6).pack(side="left", padx=4)
+        ctk.CTkButton(btn_row, text="← Torna agli album",
+                      command=self._show_albums,
+                      fg_color=PANEL, hover_color=CARD, text_color=SUBTEXT,
+                      font=("Segoe UI", 9), corner_radius=6).pack(side="left", padx=4)
+        ctk.CTkButton(btn_row, text="Nuova ricerca",
+                      command=self._show_search,
+                      fg_color=PANEL, hover_color=CARD, text_color=SUBTEXT,
+                      font=("Segoe UI", 9), corner_radius=6).pack(side="left", padx=4)
 
     # ── Gestione coda ────────────────────────────────────────
 
@@ -1214,8 +1207,8 @@ class MusicDownloaderApp:
 
     def _refresh_queue_ui(self):
         n = len(self.download_queue)
-        self.queue_count_var.set(f"{n} {'canzone' if n == 1 else 'canzoni'}")
-        self.btn_download.config(state="normal" if n > 0 else "disabled")
+        self.queue_count_label.configure(text=f"{n} {'canzone' if n == 1 else 'canzoni'}")
+        self.btn_download.configure(state="normal" if n > 0 else "disabled")
 
     # ── Download ─────────────────────────────────────────────
 
@@ -1225,7 +1218,7 @@ class MusicDownloaderApp:
             return
         queue = list(self.download_queue)
         self._cancel_event.clear()
-        self.btn_download.config(state="disabled")
+        self.btn_download.configure(state="disabled")
         self._show_download_panel(queue)
         threading.Thread(
             target=self._run_download,
@@ -1235,7 +1228,6 @@ class MusicDownloaderApp:
         ).start()
 
     def _get_genre(self, album_id: str) -> tuple:
-        """Restituisce (genre_str, nb_tracks) con cache. Popola anche _cover_cache."""
         if not album_id:
             return "", 0
         if album_id in self._genre_cache:
@@ -1245,9 +1237,9 @@ class MusicDownloaderApp:
             genre     = details.get("genre", "")
             nb_tracks = details.get("nb_tracks", 0)
             cover_url = details.get("cover_xl", "")
-            self._genre_cache[album_id]    = genre
+            self._genre_cache[album_id]     = genre
             self._nb_tracks_cache[album_id] = nb_tracks
-            self._cover_cache[album_id]    = cover_url
+            self._cover_cache[album_id]     = cover_url
             return genre, nb_tracks
         except Exception:
             return "", 0
@@ -1256,7 +1248,6 @@ class MusicDownloaderApp:
     def _tag_file(filepath: str, meta: dict) -> None:
         if not filepath or not Path(filepath).exists():
             return
-        # Tag testuali
         try:
             try:
                 tags = EasyID3(filepath)
@@ -1276,10 +1267,10 @@ class MusicDownloaderApp:
             for key, val in mapping.items():
                 if val:
                     tags[key] = [str(val)]
+                    logger.debug(f"[Tags] {key}={val!r} → {Path(filepath).name}")
             tags.save()
         except Exception as e:
             logger.error(f"[Tags] Errore su {filepath}: {e}")
-        # Copertina album
         cover_url = meta.get("cover_url", "")
         if cover_url:
             try:
@@ -1290,11 +1281,11 @@ class MusicDownloaderApp:
                 tags2.add(APIC(encoding=3, mime="image/jpeg", type=3,
                                desc="Cover", data=img_data))
                 tags2.save()
+                logger.debug(f"[Tags] Copertina incorporata: {Path(filepath).name}")
             except Exception as e:
                 logger.error(f"[Tags] Errore artwork {filepath}: {e}")
 
     def _prepare_meta(self, item: dict, genre_info: tuple = None) -> dict:
-        """Arricchisce il dizionario meta con genere, tracknumber completo e cover."""
         meta             = dict(item.get("meta") or {})
         genre, nb_tracks = genre_info if genre_info is not None \
                            else self._get_genre(meta.get("album_id", ""))
@@ -1308,7 +1299,6 @@ class MusicDownloaderApp:
         return meta
 
     def _resolve_url(self, item: dict) -> List[str]:
-        """Restituisce la lista di URL YouTube ordinati per score, con cache persistente."""
         query = item["query"]
         cached = self.cache.get_youtube_urls(query)
         if cached:
@@ -1327,7 +1317,6 @@ class MusicDownloaderApp:
     def _download_single(self, item: dict, destination: str,
                          progress_cb=None, genre_info: tuple = None,
                          urls: List[str] = None) -> tuple:
-        """Scarica e tagga una traccia. Restituisce (ok: bool, err_label: str|None)."""
         dest     = item.get("destination") or destination
         meta     = self._prepare_meta(item, genre_info)
         title    = meta.get("title") or item["label"]
@@ -1335,38 +1324,44 @@ class MusicDownloaderApp:
         raw_name = f"{artist} - {title}" if artist else title
         filename = re.sub(r'[<>:"/\\|?*\n\r\t]', '_', raw_name).strip()[:FILENAME_MAX_LENGTH]
 
+        logger.info(f"[Download] Inizio: '{item['label']}' → query='{item['query']}'")
+
         if Path(dest, f"{filename}.mp3").exists():
+            logger.info(f"[Download] Saltato (già esiste): {filename}.mp3")
             return True, None
 
         if urls is None:
             urls = self._resolve_url(item)
         if not urls:
+            logger.warning(f"[Download] Nessun URL trovato per: '{item['label']}'")
             return False, item["label"]
 
-        for url in urls:
+        for i, url in enumerate(urls):
             try:
+                logger.debug(f"[Download] Tentativo {i+1}/{len(urls)}: {url}")
                 filepath = self.downloader.download(url, dest, filename=filename,
                                                     progress_callback=progress_cb)
                 self._tag_file(filepath, meta)
+                logger.info(f"[Download] Completato: {filepath}")
                 return True, None
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[Download] URL {i+1} fallito per '{item['label']}': {e}")
                 continue
+
+        logger.error(f"[Download] Tutti gli URL esauriti per: '{item['label']}'")
         return False, item["label"]
 
     def _run_download(self, queue: list, destination: str,
                       genre_info: tuple = None, artist_name: str = None,
                       clear_queue: bool = False):
-        """Pipeline resolver/worker: il resolver pre-fetcha genere e URL YouTube
-        in avanti; i 3 worker scaricano non appena un item è pronto, senza blocchi
-        tra batch."""
         total = len(queue)
         lock  = threading.Lock()
         state = {"successi": 0, "falliti": [], "completed": 0}
-        ready: Queue = Queue()  # produce (item, urls) oppure None come sentinel
+        ready: Queue = Queue()
+
+        logger.info(f"[Batch] Inizio download: {total} tracce → {destination}")
 
         def resolver():
-            # Pre-fetcha i generi per album (veloce, una sola chiamata per album)
-            # poi riversa tutti gli item nella queue subito — i worker partono in parallelo
             seen: set = set()
             for item in queue:
                 if genre_info is None:
@@ -1393,6 +1388,7 @@ class MusicDownloaderApp:
                         state["completed"] += 1
                         state["falliti"].append(f"{item['label']} (annullato)")
                         c = state["completed"]
+                    logger.info(f"[Download] Annullato: '{item['label']}'")
                     self.root.after(0, self._track_completed, item, item_id, False, c, total)
                     continue
 
@@ -1402,9 +1398,9 @@ class MusicDownloaderApp:
                     self.root.after(0, self._update_track_progress, _id, percent)
 
                 try:
-                    # URL resolution + download avvengono qui, in parallelo tra i worker
                     ok, err = self._download_single(item, destination, progress_cb, genre_info)
                 except Exception as e:
+                    logger.error(f"[Worker] Eccezione non gestita per '{item['label']}': {e}", exc_info=True)
                     ok, err = False, f"{item['label']} ({str(e)[:40]})"
 
                 with lock:
@@ -1428,6 +1424,8 @@ class MusicDownloaderApp:
         for t in workers:
             t.join()
 
+        logger.info(f"[Batch] Fine: {state['successi']}/{total} successi, {len(state['falliti'])} falliti")
+
         self.root.after(0, self._download_all_done,
                         state["successi"], state["falliti"],
                         queue, destination, artist_name, clear_queue)
@@ -1437,7 +1435,6 @@ class MusicDownloaderApp:
         self._restore_queue_panel()
         totale = len(queue)
 
-        # Una sola entry per batch in cronologia
         if len(queue) == 1:
             entry_type = "track"
             nome    = queue[0].get("label", queue[0].get("query", ""))
@@ -1491,11 +1488,10 @@ class MusicDownloaderApp:
         try:
             details = self.searcher.get_album_details(str(album_id))
             anno = details.get("anno", "")
-            # Metti in cache genre e copertina per non rifare la chiamata al download
             aid = str(album_id)
-            self._genre_cache[aid]    = details.get("genre", "")
+            self._genre_cache[aid]     = details.get("genre", "")
             self._nb_tracks_cache[aid] = details.get("nb_tracks", 0)
-            self._cover_cache[aid]    = details.get("cover_xl", "")
+            self._cover_cache[aid]     = details.get("cover_xl", "")
         except Exception:
             anno = ""
         self._show_tracks({"id": album_id, "nome": album_name, "anno": anno})
@@ -1507,7 +1503,6 @@ class MusicDownloaderApp:
         return re.sub(r'[<>:"/\\|?*]', '_', name).strip()[:FILENAME_MAX_LENGTH]
 
     def _download_albums_batch(self, albums: list):
-        """Download di più album in batch: una sottocartella per album nella dest scelta."""
         destination = filedialog.askdirectory(title="Seleziona cartella di destinazione")
         if not destination:
             return
@@ -1581,6 +1576,6 @@ class MusicDownloaderApp:
 # Avvio
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = ctk.CTk()
     MusicDownloaderApp(root)
     root.mainloop()

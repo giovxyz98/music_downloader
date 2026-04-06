@@ -1,5 +1,9 @@
 Modifiche da fare:
 
+49. Migrazione UI da Tkinter/ttk a CustomTkinter: widget moderni con dark mode nativa (CTkFrame, CTkLabel, CTkButton, CTkEntry, CTkRadioButton, CTkComboBox, CTkProgressBar); Treeview e Listbox mantenuti in tk/ttk (nessun equivalente CTk); CTkScrollableFrame nel pannello download al posto di Canvas+mousewheel manuale
+50. Logging completo per sviluppo: aggiunto INFO/DEBUG/WARNING/ERROR su avvio app, ricerche YouTube con score dettagliato per ogni risultato, cache hit/miss YouTube, chiamate Deezer con URL e params, ogni download con query e URL tentati, skip file già esistente, tag ID3 scritti campo per campo, copertina incorporata, annullamenti, errori worker con exc_info=True, log inizio/fine batch con totali
+51. concurrent_fragment_downloads=3 in yt-dlp: scarica 3 frammenti audio in parallelo aggirando il throttling YouTube che limitava le velocità a 40-70 KiB/s
+
 1. Aggiungere l'anno dopo il titolo, dentro le parentesi
 2. Ordinamento per nome (asc/desc) e per anno (asc/desc), label invariata
 3. Eliminare i 2 file .py separati, tutto in un unico file con struttura a classi (o equivalente pulito)

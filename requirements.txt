@@ -2,3 +2,4 @@ requests==2.32.3
 yt-dlp==2026.3.17
 mutagen==1.47.0
 rapidfuzz==3.12.2
+customtkinter==5.2.2

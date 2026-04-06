@@ -1,0 +1,10 @@
+# Ignora tutto per default
+*
+
+# Includi file specifici
+!.gitignore
+!README.md
+!*.txt
+!music_downloader.py
+!start.bat
+!config.json

@@ -1,25 +1,9 @@
 DOCUMENTO DI REVISIONE ARCHITETTURALE
-Progetto: Music Downloader (Python + Tkinter + yt-dlp)
+Progetto: Music Downloader (Python + CustomTkinter + yt-dlp)
 
 Questo documento raccoglie in modo completo e organizzato tutte le migliorie individuate durante la revisione del progetto. Le osservazioni includono sia quelle proposte dal revisore originale sia ulteriori miglioramenti architetturali individuati successivamente. L'obiettivo è trasformare il progetto da semplice applicazione funzionante a software più robusto, stabile, manutenibile e distribuibile.
 
 Le migliorie sono ordinate per area tecnica.
-
-────────────────────────────────────────────────────────
-
-SEZIONE 6 — MIGLIORAMENTO ESTETICO DELL'INTERFACCIA
-
-6.1 Migrazione a CustomTkinter
-
-Tkinter con ttk è funzionale ma l'aspetto grafico è relativamente datato. CustomTkinter offre componenti più moderni e supporto nativo per dark mode.
-
-Il passaggio è generalmente semplice perché la libreria è quasi compatibile con Tkinter.
-
-Benefici:
-- interfaccia più moderna
-- migliore percezione qualitativa dell'applicazione
-
-Priorità: bassa.
 
 ────────────────────────────────────────────────────────
 
@@ -45,7 +29,7 @@ Benefici:
 - manutenzione più semplice
 - maggiore testabilità
 
-Priorità: medio-alta.
+Priorità: bassa - previa approvazione.
 
 ────────────────────────────────────────────────────────
 
