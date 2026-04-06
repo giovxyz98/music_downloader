@@ -10,16 +10,8 @@
 !config.json
 !requirements.txt
 
-# Includi packages
-!/core/
-!/infra/
-!/ui/
-core/**
-infra/**
-ui/**
-!core/*.py
-!infra/*.py
-!ui/*.py
+# Includi file Python
+!*.py
 
 # Escludi sempre
 **/__pycache__/

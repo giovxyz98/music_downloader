@@ -10,7 +10,7 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC, ID3NoHeaderError
 from rapidfuzz import fuzz
 
-from infra.config import (
+from config import (
     logger,
     PREFERRED_QUALITY, SOCKET_TIMEOUT, RETRIES, YOUTUBE_RESULTS,
     FILENAME_MAX_LENGTH, DOWNLOAD_TIMEOUT,

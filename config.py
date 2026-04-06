@@ -23,7 +23,7 @@ BORDER  = "#4b5563"
 logger = logging.getLogger("music_downloader")
 if not logger.handlers:
     logger.setLevel(logging.DEBUG)
-    _log_file = Path(__file__).parent.parent / "music_downloader.log"
+    _log_file = Path(__file__).parent / "music_downloader.log"
     _fh = RotatingFileHandler(_log_file, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
     _fh.setLevel(logging.DEBUG)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -62,9 +62,10 @@ _CFG_DEFAULTS: dict = {
     "SCORE_DURATION_CLOSE":       10,
     "SCORE_DURATION_FAR_PENALTY": 20,
     "SCORE_FUZZY_MULTIPLIER":     0.3,
+    "SEARCH_WORKERS":             2,
 }
 
-_cfg_file = Path(__file__).parent.parent / "config.json"
+_cfg_file = Path(__file__).parent / "config.json"
 try:
     with open(_cfg_file, "r", encoding="utf-8") as _f:
         _cfg = {**_CFG_DEFAULTS, **json.load(_f)}
@@ -73,8 +74,10 @@ except FileNotFoundError:
     with open(_cfg_file, "w", encoding="utf-8") as _f:
         json.dump(_CFG_DEFAULTS, _f, indent=2)
 except Exception as _e:
-    logger.warning(f"config.json non leggibile, uso default: {_e}")
+    logger.warning(f"config.json non leggibile, lo rigenero con i default: {_e}")
     _cfg = dict(_CFG_DEFAULTS)
+    with open(_cfg_file, "w", encoding="utf-8") as _f:
+        json.dump(_CFG_DEFAULTS, _f, indent=2)
 
 MAX_WORKERS                = _cfg["MAX_WORKERS"]
 PREFERRED_QUALITY          = _cfg["PREFERRED_QUALITY"]
@@ -100,3 +103,4 @@ SCORE_DURATION_EXACT       = _cfg["SCORE_DURATION_EXACT"]
 SCORE_DURATION_CLOSE       = _cfg["SCORE_DURATION_CLOSE"]
 SCORE_DURATION_FAR_PENALTY = _cfg["SCORE_DURATION_FAR_PENALTY"]
 SCORE_FUZZY_MULTIPLIER     = _cfg["SCORE_FUZZY_MULTIPLIER"]
+SEARCH_WORKERS             = _cfg["SEARCH_WORKERS"]

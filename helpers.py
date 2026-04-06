@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from infra.config import BG, PANEL, TEXT, ACCENT, SUBTEXT
+from config import BG, PANEL, TEXT, ACCENT, SUBTEXT
 
 
 def scrolled_tree(parent, columns, headings, col_widths):

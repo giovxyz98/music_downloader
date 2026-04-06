@@ -13,17 +13,17 @@ import customtkinter as ctk
 import requests
 import yt_dlp
 
-from infra.config import (
+from config import (
     logger,
     BG, PANEL, CARD, ACCENT, ACCENT2, TEXT, SUBTEXT, ERROR, BORDER,
-    MAX_WORKERS, HISTORY_MENU_MAX, RECENT_SEARCHES_SHOWN,
+    MAX_WORKERS, SEARCH_WORKERS, HISTORY_MENU_MAX, RECENT_SEARCHES_SHOWN,
     FILENAME_MAX_LENGTH,
 )
-from infra.cache import CacheManager
-from core.models import Artist, Album, Track, QueueItem
-from core.searcher import MusicSearcher
-from core.downloader import AudioDownloader, sanitize_filename, tag_file
-from ui.helpers import scrolled_tree
+from cache import CacheManager
+from models import Artist, Album, Track, QueueItem
+from searcher import MusicSearcher
+from downloader import AudioDownloader, sanitize_filename, tag_file
+from helpers import scrolled_tree
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -903,10 +903,11 @@ class MusicDownloaderApp:
     def _run_download(self, queue: List[QueueItem], destination: str,
                       genre_info: tuple = None, artist_name: str = None,
                       clear_queue: bool = False):
-        total = len(queue)
-        lock  = threading.Lock()
-        state = {"successi": 0, "falliti": [], "completed": 0}
-        ready: Queue = Queue()
+        total    = len(queue)
+        lock     = threading.Lock()
+        state    = {"successi": 0, "falliti": [], "completed": 0}
+        search_q: Queue = Queue()
+        download_q: Queue = Queue()
 
         logger.info(f"[Batch] Inizio download: {total} tracce → {destination}")
 
@@ -921,15 +922,27 @@ class MusicDownloaderApp:
             for item in queue:
                 if self._cancel_event.is_set():
                     break
-                ready.put(item)
-            for _ in range(MAX_WORKERS):
-                ready.put(None)
+                search_q.put(item)
+            for _ in range(SEARCH_WORKERS):
+                search_q.put(None)
 
-        def worker():
+        def search_worker():
             while True:
-                item = ready.get()
+                item = search_q.get()
                 if item is None:
                     break
+                if self._cancel_event.is_set():
+                    download_q.put((item, []))
+                    continue
+                urls = self._resolve_url(item)
+                download_q.put((item, urls))
+
+        def download_worker():
+            while True:
+                entry = download_q.get()
+                if entry is None:
+                    break
+                item, urls = entry
                 item_id = id(item)
 
                 if self._cancel_event.is_set():
@@ -947,7 +960,8 @@ class MusicDownloaderApp:
                     self.root.after(0, self._update_track_progress, _id, percent)
 
                 try:
-                    ok, err = self._download_single(item, destination, progress_cb, genre_info)
+                    ok, err = self._download_single(item, destination, progress_cb, genre_info,
+                                                    urls=urls)
                 except Exception as e:
                     logger.error(
                         f"[Worker] Eccezione non gestita per '{item.label}': {e}", exc_info=True)
@@ -963,13 +977,21 @@ class MusicDownloaderApp:
 
                 self.root.after(0, self._track_completed, item, item_id, ok, c, total)
 
-        resolver_t = threading.Thread(target=resolver, daemon=True)
+        resolver_t      = threading.Thread(target=resolver,         daemon=True)
+        search_threads  = [threading.Thread(target=search_worker,   daemon=True)
+                           for _ in range(SEARCH_WORKERS)]
+        download_threads = [threading.Thread(target=download_worker, daemon=True)
+                            for _ in range(MAX_WORKERS)]
+
         resolver_t.start()
-        workers = [threading.Thread(target=worker, daemon=True) for _ in range(MAX_WORKERS)]
-        for t in workers:
+        for t in search_threads + download_threads:
             t.start()
         resolver_t.join()
-        for t in workers:
+        for t in search_threads:
+            t.join()
+        for _ in range(MAX_WORKERS):
+            download_q.put(None)
+        for t in download_threads:
             t.join()
 
         logger.info(

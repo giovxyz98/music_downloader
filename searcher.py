@@ -3,11 +3,11 @@ from typing import Dict, List, Optional
 
 import requests
 
-from infra.config import (
+from config import (
     logger, RETRIES, SOCKET_TIMEOUT,
     DEEZER_ARTIST_LIMIT, DEEZER_TRACK_LIMIT, CACHE_MAXSIZE,
 )
-from core.models import Artist, Album, Track
+from models import Artist, Album, Track
 
 
 class MusicSearcher:
