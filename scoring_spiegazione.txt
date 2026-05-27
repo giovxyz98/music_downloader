@@ -1,0 +1,136 @@
+ALGORITMO DI SCORING YOUTUBE
+Progetto: Music Downloader
+════════════════════════════════════════════════════════════════
+
+Quando l'app cerca una canzone su YouTube, non prende il primo risultato
+in assoluto: assegna un punteggio a ogni risultato e sceglie quello con
+il punteggio più alto.
+
+Il punteggio parte da 0 e viene modificato da bonus e penalità.
+
+
+────────────────────────────────────────────────────────────────
+INPUT
+────────────────────────────────────────────────────────────────
+
+Per ogni ricerca vengono passati:
+  - query    : stringa usata per cercare su YouTube
+                 es. "Gianni Celeste - Te penzo"
+  - artist   : nome artista da Deezer
+                 es. "Gianni Celeste"
+  - title    : titolo traccia da Deezer
+                 es. "Te penzo"
+  - duration : durata in secondi da Deezer
+                 es. 187
+
+Prima di qualsiasi confronto, artista e titolo vengono normalizzati:
+accenti rimossi, tutto minuscolo, punteggiatura eliminata.
+
+
+────────────────────────────────────────────────────────────────
+BONUS
+────────────────────────────────────────────────────────────────
+
+  +25   Nome artista presente nel titolo YouTube
+  +30   Titolo canzone presente nel titolo YouTube
+  +15   Nome artista presente nel nome canale
+  +25   Il canale contiene "topic"
+          (canali auto-generati da YouTube per artisti verificati)
+  +10   Il titolo YouTube contiene "official video" o "official audio"
+  +20   È il primo risultato restituito da YouTube per quella query
+  +20   Durata entro 5 secondi dalla durata Deezer
+  +10   Durata entro 15 secondi dalla durata Deezer
+  +30   Fuzzy match tra titolo atteso e titolo YouTube (max)
+          (usa token_sort_ratio: ordina le parole prima di confrontare,
+           meno ingannato da parole aggiuntive nel titolo YouTube)
+
+
+────────────────────────────────────────────────────────────────
+PENALITÀ
+────────────────────────────────────────────────────────────────
+
+  -25   Per ogni parola indesiderata trovata nel titolo YouTube:
+          live, karaoke, remix, cover, instrumental,
+          sped up, slowed, 8d, nightcore
+  -20   Durata oltre 60 secondi di differenza dalla durata Deezer
+  -10   Per ogni parola "extra" nel titolo YouTube non spiegabile
+          da artista, titolo o rumore comune (vedi sotto)
+
+
+COME SI CALCOLANO LE PAROLE EXTRA
+──────────────────────────────────
+Dal titolo YouTube normalizzato vengono tolte:
+  1. Parole di rumore comune:
+       official, ufficiale, video, visual, audio, hd, 4k,
+       lyrics, testo, seamusica, ft, feat, featuring,
+       records, record, music, tv, videoclip
+  2. Anni a 4 cifre (es. 2003, 1991)
+  3. Tutte le parole del titolo atteso
+  4. Tutte le parole del nome artista
+  5. Parole di un solo carattere
+
+Quello che rimane sono parole "sospette" — ogni parola costa -10.
+
+Esempio 1 (nessuna penalità):
+  Titolo YouTube : "Massimo & Gianni Celeste - Vite Perdute - Official Seamusica"
+  Dopo pulizia   : "" (tutto spiegato da artista + titolo + rumore)
+  Parole extra   : 0  →  penalità 0
+
+Esempio 2 (penalità -10):
+  Titolo YouTube : "Però te penzo"
+  Dopo pulizia   : "pero" (non è né artista né titolo né rumore)
+  Parole extra   : 1  →  penalità -10
+
+
+────────────────────────────────────────────────────────────────
+SOGLIA MINIMA
+────────────────────────────────────────────────────────────────
+
+Se il punteggio del miglior risultato è inferiore a 20,
+il download viene saltato completamente.
+Nel log appare un WARNING:
+
+  [YouTube] Score troppo basso (X) per 'titolo', download saltato
+
+
+────────────────────────────────────────────────────────────────
+COME LEGGERE UNA RIGA DI LOG
+────────────────────────────────────────────────────────────────
+
+Esempio:
+  [YouTube] Score=125  cercato='Te penzo'  views= 1,234,567
+            canale='Gianni Celeste – Topic'
+            titolo='Gianni Celeste - Te penzo (Official Audio)'
+
+  Score    : punteggio finale calcolato
+  cercato  : titolo che si stava cercando (da Deezer)
+  views    : visualizzazioni del video (informativo, non influenza lo score)
+  canale   : nome del canale YouTube
+  titolo   : titolo del video YouTube
+
+Vengono mostrate tutte le righe (tutti i candidati), ordinate per score
+decrescente. Il primo è quello che verrà scaricato.
+
+
+────────────────────────────────────────────────────────────────
+CONFIGURAZIONE
+────────────────────────────────────────────────────────────────
+
+Tutti i valori numerici si trovano in config.json con prefisso SCORE_*
+e possono essere modificati senza toccare il codice.
+
+  SCORE_ARTIST_IN_TITLE      = 25
+  SCORE_TITLE_IN_TITLE       = 30
+  SCORE_ARTIST_IN_CHANNEL    = 15
+  SCORE_TOPIC_CHANNEL        = 25
+  SCORE_OFFICIAL_KEYWORD     = 10
+  SCORE_BAD_KEYWORD_PENALTY  = 25
+  SCORE_DURATION_EXACT       = 20
+  SCORE_DURATION_CLOSE       = 10
+  SCORE_DURATION_FAR_PENALTY = 20
+  SCORE_FUZZY_MULTIPLIER     = 0.3
+  SCORE_FIRST_RESULT_BONUS   = 20
+  SCORE_EXTRA_WORD_PENALTY   = 10
+  SCORE_MIN_DOWNLOAD         = 20
+
+FINE DOCUMENTO

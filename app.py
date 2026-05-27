@@ -22,8 +22,9 @@ from config import (
 from cache import CacheManager
 from models import Artist, Album, Track, QueueItem
 from searcher import MusicSearcher
-from downloader import AudioDownloader, sanitize_filename, tag_file
-from helpers import scrolled_tree
+from downloader import AudioDownloader, tag_file
+from youtube import YouTubeSearcher
+from helpers import scrolled_tree, sanitize_filename
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -57,7 +58,7 @@ class MusicDownloaderApp:
         self.current_tracks:   List[Track] = []
         self._genre_cache:     dict = {}
         self._nb_tracks_cache: dict = {}
-        self._cover_cache:     dict = {}
+        self._yt_url_cache:    dict = {}
 
         self._dl_general_bar:   Optional[ctk.CTkProgressBar] = None
         self._dl_general_label: Optional[ctk.CTkLabel]       = None
@@ -827,10 +828,8 @@ class MusicDownloaderApp:
             details = self.searcher.get_album_details(int(album_id))
             genre     = details.get("genre", "")
             nb_tracks = details.get("nb_tracks", 0)
-            cover_url = details.get("cover_xl", "")
             self._genre_cache[album_id]     = genre
             self._nb_tracks_cache[album_id] = nb_tracks
-            self._cover_cache[album_id]     = cover_url
             return genre, nb_tracks
         except Exception:
             return "", 0
@@ -843,24 +842,22 @@ class MusicDownloaderApp:
             meta["genre"] = genre
         if meta.get("tracknumber") and nb_tracks:
             meta["tracknumber"] = f"{meta['tracknumber']}/{nb_tracks}"
-        album_id = meta.get("album_id", "")
-        if album_id and album_id in self._cover_cache:
-            meta["cover_url"] = self._cover_cache[album_id]
         return meta
 
     def _resolve_url(self, item: QueueItem) -> List[str]:
-        cached = self.cache.get_youtube_urls(item.query)
+        cached = self._yt_url_cache.get(item.query)
         if cached:
+            logger.debug(f"[Cache] YouTube hit: '{item.query}'")
             return cached
         meta = item.meta or {}
-        urls = AudioDownloader.search_youtube(
+        urls = YouTubeSearcher.search(
             item.query,
             artist   = meta.get("artist", ""),
             title    = meta.get("title", ""),
             duration = meta.get("duration", 0),
         )
         if urls:
-            self.cache.set_youtube_urls(item.query, urls)
+            self._yt_url_cache[item.query] = urls
         return urls
 
     def _download_single(self, item: QueueItem, destination: str,
@@ -1062,7 +1059,6 @@ class MusicDownloaderApp:
             aid  = str(album_id)
             self._genre_cache[aid]     = details.get("genre", "")
             self._nb_tracks_cache[aid] = details.get("nb_tracks", 0)
-            self._cover_cache[aid]     = details.get("cover_xl", "")
         except Exception:
             anno = ""
         self._show_tracks(Album(id=album_id, nome=album_name, anno=anno))

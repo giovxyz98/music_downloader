@@ -12,7 +12,7 @@ class CacheManager:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self.data: dict = {"recent_searches": [], "download_history": [], "youtube_cache": {}}
+        self.data: dict = {"recent_searches": [], "download_history": {}}
         self._load()
 
     def _load(self):
@@ -23,7 +23,6 @@ class CacheManager:
                 with self._lock:
                     self.data["recent_searches"]  = loaded.get("recent_searches", [])
                     self.data["download_history"] = loaded.get("download_history", [])
-                    self.data["youtube_cache"]    = loaded.get("youtube_cache", {})
             except Exception as e:
                 logger.error(f"[Cache] Errore lettura: {e}")
 
@@ -75,20 +74,3 @@ class CacheManager:
             self.data["download_history"] = []
             self._save_unlocked()
 
-    def get_youtube_urls(self, query: str) -> List[str]:
-        with self._lock:
-            cached = list(self.data["youtube_cache"].get(query, []))
-        if cached:
-            logger.debug(f"[Cache] YouTube hit: '{query}'")
-        else:
-            logger.debug(f"[Cache] YouTube miss: '{query}'")
-        return cached
-
-    def set_youtube_urls(self, query: str, urls: List[str]):
-        with self._lock:
-            self.data["youtube_cache"][query] = urls
-            if len(self.data["youtube_cache"]) > MAX_SEARCHES:
-                keys = list(self.data["youtube_cache"].keys())
-                for k in keys[:-MAX_SEARCHES]:
-                    del self.data["youtube_cache"][k]
-            self._save_unlocked()

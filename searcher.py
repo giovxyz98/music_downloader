@@ -53,6 +53,7 @@ class MusicSearcher:
                 time.sleep(1 * (2 ** attempt))
 
     def search_artist(self, name: str) -> List[Artist]:
+        name = name.lower().strip()
         if name in self._artist_cache:
             logger.debug(f"[Deezer] Cache hit artista: {name}")
             return self._artist_cache[name]
@@ -70,6 +71,7 @@ class MusicSearcher:
         return result
 
     def search_track(self, query: str) -> List[Track]:
+        query = query.lower().strip()
         if query in self._search_cache:
             logger.debug(f"[Deezer] Cache hit canzone: {query}")
             return self._search_cache[query]

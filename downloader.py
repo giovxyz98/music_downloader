@@ -1,34 +1,22 @@
-import re
+import glob
 import threading
-import unicodedata
-import urllib.request
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import yt_dlp
 from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3, APIC, ID3NoHeaderError
-from rapidfuzz import fuzz
+from mutagen.id3 import ID3NoHeaderError
 
 from config import (
     logger,
-    PREFERRED_QUALITY, SOCKET_TIMEOUT, RETRIES, YOUTUBE_RESULTS,
-    FILENAME_MAX_LENGTH, DOWNLOAD_TIMEOUT,
-    SCORE_ARTIST_IN_TITLE, SCORE_TITLE_IN_TITLE, SCORE_ARTIST_IN_CHANNEL,
-    SCORE_TOPIC_CHANNEL, SCORE_OFFICIAL_KEYWORD, SCORE_BAD_KEYWORD_PENALTY,
-    SCORE_DURATION_EXACT, SCORE_DURATION_CLOSE, SCORE_DURATION_FAR_PENALTY,
-    SCORE_FUZZY_MULTIPLIER,
+    PREFERRED_QUALITY, SOCKET_TIMEOUT, RETRIES, DOWNLOAD_TIMEOUT,
 )
-
-
-def sanitize_filename(name: str, max_length: int = FILENAME_MAX_LENGTH) -> str:
-    return re.sub(r'[<>:"/\\|?*\n\r\t]', '_', name).strip()[:max_length]
+from helpers import sanitize_filename
 
 
 def tag_file(filepath: str, meta: dict) -> None:
     if not filepath or not Path(filepath).exists():
         return
-    # Tag testuali
     try:
         try:
             tags = EasyID3(filepath)
@@ -52,104 +40,20 @@ def tag_file(filepath: str, meta: dict) -> None:
         tags.save()
     except Exception as e:
         logger.error(f"[Tags] Errore su {filepath}: {e}")
-    # Copertina
-    cover_url = meta.get("cover_url", "")
-    if cover_url:
-        try:
-            tags2 = ID3(filepath)
-            tags2.delall("APIC")
-            with urllib.request.urlopen(cover_url, timeout=SOCKET_TIMEOUT) as resp:
-                img_data = resp.read()
-            tags2.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=img_data))
-            tags2.save()
-            logger.debug(f"[Tags] Copertina incorporata: {Path(filepath).name}")
-        except Exception as e:
-            logger.error(f"[Tags] Errore artwork {filepath}: {e}")
 
 
 class AudioDownloader:
-
-    _BAD_KEYWORDS      = {"live", "karaoke", "instrumental", "remix", "cover",
-                          "sped up", "slowed", "8d", "nightcore"}
-    _OFFICIAL_KEYWORDS = {"official video", "official audio"}
-
-    @staticmethod
-    def _normalize(s: str) -> str:
-        s = unicodedata.normalize("NFKD", s)
-        s = s.encode("ascii", "ignore").decode()
-        s = s.lower()
-        s = re.sub(r"[^\w\s]", " ", s)
-        s = re.sub(r"\s+", " ", s).strip()
-        return s
-
-    @staticmethod
-    def _score(entry: dict, art_n: str, tit_n: str, duration: int) -> int:
-        """art_n e tit_n devono essere già normalizzati dal chiamante."""
-        v   = AudioDownloader._normalize(entry.get("title", ""))
-        ch  = AudioDownloader._normalize(entry.get("uploader", "") or entry.get("channel", ""))
-        dur = entry.get("duration") or 0
-
-        score = 0
-        if art_n and art_n in v:  score += SCORE_ARTIST_IN_TITLE
-        if tit_n and tit_n in v:  score += SCORE_TITLE_IN_TITLE
-        if art_n and art_n in ch: score += SCORE_ARTIST_IN_CHANNEL
-        if "topic" in ch:         score += SCORE_TOPIC_CHANNEL
-        for k in AudioDownloader._OFFICIAL_KEYWORDS:
-            if k in v: score += SCORE_OFFICIAL_KEYWORD
-        for k in AudioDownloader._BAD_KEYWORDS:
-            if k in v: score -= SCORE_BAD_KEYWORD_PENALTY
-        if dur and duration:
-            diff = abs(dur - duration)
-            if   diff <  5: score += SCORE_DURATION_EXACT
-            elif diff < 15: score += SCORE_DURATION_CLOSE
-            elif diff > 60: score -= SCORE_DURATION_FAR_PENALTY
-        if tit_n:
-            score += int(fuzz.partial_ratio(tit_n, v) * SCORE_FUZZY_MULTIPLIER)
-        return score
-
-    @staticmethod
-    def search_youtube(query: str, artist: str = "", title: str = "",
-                       duration: int = 0) -> List[str]:
-        logger.debug(f"[YouTube] Ricerca: '{query}' (artista='{artist}', titolo='{title}', durata={duration}s)")
-        # Pre-normalizzazione: evita di ricalcolare per ogni risultato
-        art_n = AudioDownloader._normalize(artist)
-        tit_n = AudioDownloader._normalize(title)
-        try:
-            with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as ydl:
-                results = ydl.extract_info(f"ytsearch{YOUTUBE_RESULTS}:{query}", download=False)
-            entries = [e for e in (results.get("entries") or []) if e]
-            if not entries:
-                logger.warning(f"[YouTube] Nessun risultato per: '{query}'")
-                return []
-            scored = sorted(
-                entries,
-                key=lambda e: AudioDownloader._score(e, art_n, tit_n, duration),
-                reverse=True,
-            )
-            for e in scored:
-                s = AudioDownloader._score(e, art_n, tit_n, duration)
-                logger.debug(
-                    f"[YouTube] Score={s:3d}  canale='{e.get('uploader', '?')}'  "
-                    f"titolo='{e.get('title', '?')[:60]}'"
-                )
-            urls = [e["url"] for e in scored]
-            logger.debug(f"[YouTube] {len(urls)} risultati, primo: {urls[0] if urls else 'nessuno'}")
-            return urls
-        except Exception as e:
-            logger.error(f"[YouTube] Errore ricerca '{query}': {e}")
-        return []
 
     @staticmethod
     def _do_download(url: str, destination: str, filename: str = None,
                      progress_callback=None) -> Optional[str]:
         """Scarica tramite yt-dlp. Blocca il thread chiamante."""
         if filename:
-            safe       = sanitize_filename(filename)
-            outtmpl    = str(Path(destination) / f"{safe}.%(ext)s")
-            final_path = str(Path(destination) / f"{safe}.mp3")
+            safe    = sanitize_filename(filename)
+            outtmpl = str(Path(destination) / f"{safe}.%(ext)s")
         else:
-            outtmpl    = str(Path(destination) / "%(title)s.%(ext)s")
-            final_path = None
+            safe    = None
+            outtmpl = str(Path(destination) / "%(title)s.%(ext)s")
 
         def _hook(d):
             if progress_callback and d["status"] == "downloading":
@@ -175,7 +79,12 @@ class AudioDownloader:
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
-        return final_path
+
+        if safe:
+            matches = glob.glob(str(Path(destination) / f"{safe}.*"))
+            mp3 = [m for m in matches if m.endswith(".mp3")]
+            return mp3[0] if mp3 else (matches[0] if matches else None)
+        return None
 
     @staticmethod
     def download(url: str, destination: str, filename: str = None,

@@ -1,7 +1,12 @@
+import re
 import tkinter as tk
 from tkinter import ttk
 
-from config import BG, PANEL, TEXT, ACCENT, SUBTEXT
+from config import BG, PANEL, TEXT, ACCENT, SUBTEXT, FILENAME_MAX_LENGTH
+
+
+def sanitize_filename(name: str, max_length: int = FILENAME_MAX_LENGTH) -> str:
+    return re.sub(r'[<>:"/\\|?*\n\r\t]', '_', name).strip()[:max_length]
 
 
 def scrolled_tree(parent, columns, headings, col_widths):
