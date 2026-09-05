@@ -8,19 +8,22 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
 
 from .config import (
-    logger,
+    logger, YtDlpLogAdapter,
     PREFERRED_QUALITY, SOCKET_TIMEOUT, RETRIES, DOWNLOAD_TIMEOUT,
 )
 from .text_utils import sanitize_filename
 
 
-def tag_file(filepath: str, meta: dict) -> None:
+def tag_file(filepath: str, meta: dict, tag: str = "") -> None:
     if not filepath or not Path(filepath).exists():
+        logger.warning(f"[Tags]{tag} File assente o vuoto, tagging saltato: {filepath!r}")
         return
     try:
         try:
             tags = EasyID3(filepath)
+            logger.debug(f"[Tags]{tag} Header ID3 esistente su {Path(filepath).name}")
         except ID3NoHeaderError:
+            logger.debug(f"[Tags]{tag} Nessun header ID3, ne creo uno nuovo su {Path(filepath).name}")
             tags = EasyID3()
             tags.save(filepath)
             tags = EasyID3(filepath)
@@ -36,17 +39,20 @@ def tag_file(filepath: str, meta: dict) -> None:
         for key, val in mapping.items():
             if val:
                 tags[key] = [str(val)]
-                logger.debug(f"[Tags] {key}={val!r} → {Path(filepath).name}")
+                logger.debug(f"[Tags]{tag} {key}={val!r} → {Path(filepath).name}")
+            else:
+                logger.debug(f"[Tags]{tag} {key} assente in meta, non scritto → {Path(filepath).name}")
         tags.save()
+        logger.debug(f"[Tags]{tag} Salvataggio ID3 completato su {Path(filepath).name}")
     except Exception as e:
-        logger.error(f"[Tags] Errore su {filepath}: {e}")
+        logger.error(f"[Tags]{tag} Errore su {filepath}: {e}")
 
 
 class AudioDownloader:
 
     @staticmethod
     def _do_download(url: str, destination: str, filename: str = None,
-                     progress_callback=None) -> Optional[str]:
+                     progress_callback=None, tag: str = "") -> Optional[str]:
         """Scarica tramite yt-dlp. Blocca il thread chiamante."""
         if filename:
             safe    = sanitize_filename(filename)
@@ -56,11 +62,17 @@ class AudioDownloader:
             outtmpl = str(Path(destination) / "%(title)s.%(ext)s")
 
         def _hook(d):
-            if progress_callback and d["status"] == "downloading":
+            # Il progresso vero e proprio (%, velocità, ETA) lo logga già
+            # YtDlpLogAdapter tramite il logger interno di yt-dlp: qui serve
+            # solo per inoltrare la percentuale alla UI, non ridondarlo nel log.
+            status = d.get("status")
+            if status == "downloading" and progress_callback:
                 total      = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
                 downloaded = d.get("downloaded_bytes", 0)
                 if total:
                     progress_callback(min(downloaded / total * 100, 100))
+            elif status == "finished":
+                logger.debug(f"[yt-dlp]{tag} download raw completato, filename={d.get('filename', '?')!r}, avvio post-processing FFmpeg")
 
         opts = {
             "format": "bestaudio/best",
@@ -72,23 +84,29 @@ class AudioDownloader:
             }],
             "noplaylist":                    True,
             "quiet":                         True,
+            "verbose":                       True,
+            "logger":                        YtDlpLogAdapter(tag),
             "progress_hooks":                [_hook],
             "socket_timeout":                SOCKET_TIMEOUT,
             "retries":                       RETRIES,
             "concurrent_fragment_downloads": 3,
         }
+        logger.debug(f"[yt-dlp]{tag} avvio download url={url!r} outtmpl={outtmpl!r} opts={ {k: v for k, v in opts.items() if k != 'progress_hooks'} }")
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
 
         if safe:
             matches = glob.glob(str(Path(destination) / f"{safe}.*"))
+            logger.debug(f"[yt-dlp]{tag} glob '{safe}.*' → {matches}")
             mp3 = [m for m in matches if m.endswith(".mp3")]
-            return mp3[0] if mp3 else (matches[0] if matches else None)
+            result = mp3[0] if mp3 else (matches[0] if matches else None)
+            logger.debug(f"[yt-dlp]{tag} file risultante: {result!r}")
+            return result
         return None
 
     @staticmethod
     def download(url: str, destination: str, filename: str = None,
-                 progress_callback=None) -> Optional[str]:
+                 progress_callback=None, tag: str = "") -> Optional[str]:
         """Scarica con timeout globale di DOWNLOAD_TIMEOUT secondi.
         Il thread interno è daemon: se scade, il download continua in background
         ma il chiamante riceve RuntimeError e può passare al prossimo URL."""
@@ -97,7 +115,7 @@ class AudioDownloader:
         def _inner():
             try:
                 result["path"] = AudioDownloader._do_download(
-                    url, destination, filename, progress_callback
+                    url, destination, filename, progress_callback, tag=tag
                 )
             except Exception as e:
                 result["error"] = e
@@ -107,6 +125,7 @@ class AudioDownloader:
         t.join(DOWNLOAD_TIMEOUT)
 
         if t.is_alive():
+            logger.warning(f"[yt-dlp]{tag} timeout dopo {DOWNLOAD_TIMEOUT}s su url={url!r}, il thread continua in background come daemon")
             raise RuntimeError(f"Download timeout dopo {DOWNLOAD_TIMEOUT}s")
         if result["error"] is not None:
             raise result["error"]

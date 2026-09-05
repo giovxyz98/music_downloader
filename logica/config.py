@@ -27,7 +27,7 @@ logger = logging.getLogger("music_downloader")
 if not logger.handlers:
     logger.setLevel(logging.DEBUG)
     _log_file = ROOT_DIR / "music_downloader.log"
-    _fh = RotatingFileHandler(_log_file, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
+    _fh = RotatingFileHandler(_log_file, maxBytes=20_000_000, backupCount=5, encoding="utf-8")
     _fh.setLevel(logging.DEBUG)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     _ch = logging.StreamHandler()
@@ -70,6 +70,11 @@ _CFG_DEFAULTS: dict = {
     "SCORE_ORIGINAL_ARTIST_MISSING_PENALTY": 35,
     "SCORE_MIN_DOWNLOAD":                    50,
     "SEARCH_WORKERS":             2,
+    # Penalità "canale sospetto": se un candidato ha views drasticamente più
+    # basse di un altro candidato che cita lo stesso artista nella stessa
+    # ricerca, è probabile un canale omonimo/impostore — vedi problemi_scoring.txt #5
+    "SCORE_VIEWS_GAP_RATIO":      20,
+    "SCORE_VIEWS_GAP_PENALTY":    50,
 }
 
 _cfg_file = ROOT_DIR / "config.json"
@@ -115,3 +120,29 @@ SCORE_EXTRA_WORD_PENALTY              = _cfg["SCORE_EXTRA_WORD_PENALTY"]
 SCORE_ORIGINAL_ARTIST_MISSING_PENALTY = _cfg["SCORE_ORIGINAL_ARTIST_MISSING_PENALTY"]
 SCORE_MIN_DOWNLOAD                    = _cfg["SCORE_MIN_DOWNLOAD"]
 SEARCH_WORKERS             = _cfg["SEARCH_WORKERS"]
+SCORE_VIEWS_GAP_RATIO      = _cfg["SCORE_VIEWS_GAP_RATIO"]
+SCORE_VIEWS_GAP_PENALTY    = _cfg["SCORE_VIEWS_GAP_PENALTY"]
+
+_START_BANNER = "█" * 100
+logger.debug(f"\n\n{_START_BANNER}\n{'NUOVA ESECUZIONE':^100}\n{_START_BANNER}")
+logger.debug(f"[Config] Configurazione attiva: {_cfg}")
+
+
+class YtDlpLogAdapter:
+    """Inoltra i messaggi interni di yt-dlp (normalmente silenziati da quiet=True)
+    nel nostro logger, così restano nel file invece di sparire nel nulla."""
+
+    def __init__(self, tag: str = ""):
+        self.tag = tag
+
+    def debug(self, msg):
+        logger.debug(f"[yt-dlp-internal]{self.tag} {msg}")
+
+    def info(self, msg):
+        logger.debug(f"[yt-dlp-internal]{self.tag} {msg}")
+
+    def warning(self, msg):
+        logger.warning(f"[yt-dlp-internal]{self.tag} {msg}")
+
+    def error(self, msg):
+        logger.error(f"[yt-dlp-internal]{self.tag} {msg}")

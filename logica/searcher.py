@@ -23,15 +23,21 @@ class MusicSearcher:
     def _cache_set(self, cache: dict, key: str, value) -> None:
         """Inserisce nella cache con limite CACHE_MAXSIZE (eviction FIFO)."""
         if len(cache) >= CACHE_MAXSIZE:
-            del cache[next(iter(cache))]
+            evicted_key = next(iter(cache))
+            del cache[evicted_key]
+            logger.debug(f"[Deezer][Cache] limite {CACHE_MAXSIZE} raggiunto, evict FIFO di {evicted_key!r}")
         cache[key] = value
+        logger.debug(f"[Deezer][Cache] set {key!r} ({len(cache)}/{CACHE_MAXSIZE} entry in questa cache)")
 
     def _get(self, url: str, params: Optional[Dict] = None) -> Dict:
         time.sleep(0.1)
         logger.debug(f"[Deezer] GET {url} params={params}")
         for attempt in range(RETRIES):
+            t0 = time.perf_counter()
             try:
                 r = self._session.get(url, params=params, timeout=SOCKET_TIMEOUT)
+                elapsed = time.perf_counter() - t0
+                logger.debug(f"[Deezer] risposta status={r.status_code} bytes={len(r.content)} tempo={elapsed:.3f}s per {url}")
                 if r.status_code == 429:
                     retry_after = int(r.headers.get("Retry-After", 5))
                     logger.warning(f"[Deezer] Rate limited, attendo {retry_after}s")
@@ -45,6 +51,8 @@ class MusicSearcher:
                     raise RuntimeError(
                         f"Deezer error {data['error'].get('code')}: {data['error'].get('message')}"
                     )
+                n = len(data.get("data", [])) if isinstance(data.get("data"), list) else "n/a"
+                logger.debug(f"[Deezer] body: chiavi={list(data.keys())} elementi_in_data={n} next={data.get('next', None)}")
                 return data
             except requests.RequestException as e:
                 logger.warning(f"[Deezer] Tentativo {attempt+1}/{RETRIES} fallito: {e}")
@@ -58,6 +66,7 @@ class MusicSearcher:
             logger.debug(f"[Deezer] Cache hit artista: {name}")
             return self._artist_cache[name]
         data = self._get(f"{self.BASE}/search/artist", {"q": name, "limit": DEEZER_ARTIST_LIMIT})
+        raw = data.get("data", [])
         result = [
             Artist(
                 id=a["id"],
@@ -65,8 +74,11 @@ class MusicSearcher:
                 followers=a.get("nb_fan", 0),
                 nb_album=a.get("nb_album", 0),
             )
-            for a in data.get("data", []) if a.get("id")
+            for a in raw if a.get("id")
         ]
+        if len(result) != len(raw):
+            logger.debug(f"[Deezer] search_artist: {len(raw) - len(result)} elementi scartati (senza id)")
+        logger.debug(f"[Deezer] search_artist('{name}') → {len(result)} artisti: {[(a.id, a.nome) for a in result[:10]]}")
         self._cache_set(self._artist_cache, name, result)
         return result
 
@@ -76,6 +88,7 @@ class MusicSearcher:
             logger.debug(f"[Deezer] Cache hit canzone: {query}")
             return self._search_cache[query]
         data = self._get(f"{self.BASE}/search/track", {"q": query, "limit": DEEZER_TRACK_LIMIT})
+        raw = data.get("data", [])
         result = [
             Track(
                 id=t["id"],
@@ -86,8 +99,11 @@ class MusicSearcher:
                 album_id=t["album"]["id"] if t.get("album") else None,
                 duration=t.get("duration", 0),
             )
-            for t in data.get("data", []) if t.get("id")
+            for t in raw if t.get("id")
         ]
+        if len(result) != len(raw):
+            logger.debug(f"[Deezer] search_track: {len(raw) - len(result)} elementi scartati (senza id)")
+        logger.debug(f"[Deezer] search_track('{query}') → {len(result)} tracce")
         self._cache_set(self._search_cache, query, result)
         return result
 
@@ -98,8 +114,11 @@ class MusicSearcher:
             return self._album_cache[key]
         url = f"{self.BASE}/artist/{artist_id}/albums"
         albums, seen = [], set()
+        page = 0
         while url:
+            page += 1
             data = self._get(url, {"limit": 50} if not albums else None)
+            dupes = 0
             for a in data.get("data", []):
                 if a["id"] not in seen:
                     seen.add(a["id"])
@@ -110,7 +129,11 @@ class MusicSearcher:
                         artisti=[a["artist"]["name"]] if a.get("artist") else [],
                         artist_id=a["artist"]["id"] if a.get("artist") else artist_id,
                     ))
+                else:
+                    dupes += 1
+            logger.debug(f"[Deezer] get_artist_albums({artist_id}) pagina {page}: +{len(data.get('data', [])) - dupes} nuovi, {dupes} duplicati, next={data.get('next')}")
             url = data.get("next")
+        logger.debug(f"[Deezer] get_artist_albums({artist_id}) → {len(albums)} album totali in {page} pagine")
         self._cache_set(self._album_cache, key, albums)
         return albums
 
@@ -130,13 +153,14 @@ class MusicSearcher:
             )
             for t in data.get("data", [])
         ]
+        logger.debug(f"[Deezer] get_album_tracks({album_id}) → {len(result)} tracce: {[(t.numero, t.nome, t.duration) for t in result]}")
         self._cache_set(self._track_cache, key, result)
         return result
 
     def get_album_details(self, album_id: int) -> Dict:
         data = self._get(f"{self.BASE}/album/{album_id}")
         genres = [g["name"] for g in data.get("genres", {}).get("data", [])]
-        return {
+        details = {
             "genre":        ", ".join(genres),
             "album_artist": data["artist"]["name"] if data.get("artist") else "",
             "nb_tracks":    data.get("nb_tracks", 0),
@@ -144,3 +168,5 @@ class MusicSearcher:
             "anno":         data.get("release_date", "")[:4] or "",
             "cover_xl":     data.get("cover_xl", ""),
         }
+        logger.debug(f"[Deezer] get_album_details({album_id}) → {details}")
+        return details

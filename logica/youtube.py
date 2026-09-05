@@ -6,13 +6,14 @@ import yt_dlp
 from rapidfuzz import fuzz
 
 from .config import (
-    logger,
+    logger, YtDlpLogAdapter,
     YOUTUBE_RESULTS,
     SCORE_ARTIST_IN_TITLE, SCORE_TITLE_IN_TITLE, SCORE_ARTIST_IN_CHANNEL,
     SCORE_TOPIC_CHANNEL, SCORE_OFFICIAL_KEYWORD, SCORE_BAD_KEYWORD_PENALTY,
     SCORE_DURATION_EXACT, SCORE_DURATION_CLOSE, SCORE_DURATION_FAR_PENALTY,
     SCORE_FUZZY_MULTIPLIER, SCORE_FIRST_RESULT_BONUS, SCORE_EXTRA_WORD_PENALTY,
     SCORE_ORIGINAL_ARTIST_MISSING_PENALTY, SCORE_MIN_DOWNLOAD,
+    SCORE_VIEWS_GAP_RATIO, SCORE_VIEWS_GAP_PENALTY,
 )
 
 
@@ -47,42 +48,118 @@ class YouTubeSearcher:
         return len(words)
 
     @staticmethod
+    def _matches_artist(entry: dict, art_n: str) -> bool:
+        if not art_n:
+            return False
+        v  = YouTubeSearcher._normalize(entry.get("title", ""))
+        ch = YouTubeSearcher._normalize(entry.get("uploader", "") or entry.get("channel", ""))
+        return art_n in v or art_n in ch
+
+    @staticmethod
+    def _max_same_artist_views(entries: list, art_n: str) -> int:
+        """Views massime tra i candidati che citano l'artista cercato nel titolo
+        o nel canale. Usato come riferimento per _score: un candidato con views
+        molto più basse di questo massimo è probabilmente un canale
+        omonimo/impostore (problemi_scoring.txt #5), non semplicemente meno
+        popolare — per questo il confronto è ristretto agli stessi-artista,
+        così un video virale di un ARTISTA DIVERSO non abbassa ingiustamente
+        il punteggio del candidato giusto ma poco visto."""
+        matching = [e.get("view_count") or 0 for e in entries
+                    if YouTubeSearcher._matches_artist(e, art_n)]
+        return max(matching) if matching else 0
+
+    @staticmethod
     def _score(entry: dict, art_n: str, tit_n: str, duration: int,
-               orig_art_n: str = "") -> int:
+               orig_art_n: str = "", tag: str = "", idx: int = 0,
+               max_same_artist_views: int = 0) -> int:
         """art_n e tit_n devono essere già normalizzati dal chiamante.
         orig_art_n è l'artista originalmente cercato (album artist); se diverso
-        da art_n e assente nel video, viene applicata una penalità."""
+        da art_n e assente nel video, viene applicata una penalità.
+        max_same_artist_views è il massimo di views tra i candidati che citano
+        lo stesso artista in questa stessa ricerca (vedi _max_same_artist_views).
+        tag/idx sono usati solo per etichettare i log di debug del breakdown."""
         v   = YouTubeSearcher._normalize(entry.get("title", ""))
         ch  = YouTubeSearcher._normalize(entry.get("uploader", "") or entry.get("channel", ""))
         dur = entry.get("duration") or 0
 
+        p = f"[Score]{tag} cand#{idx + 1}"
+        logger.debug(
+            f"{p} grezzo: id={entry.get('id', '?')} titolo={entry.get('title', '?')!r} "
+            f"canale={(entry.get('uploader') or entry.get('channel') or '?')!r} "
+            f"channel_id={entry.get('channel_id', '?')!r} uploader_id={entry.get('uploader_id', '?')!r} "
+            f"views={entry.get('view_count') or 0} durata_video={dur}s url={entry.get('url', '?')}"
+        )
+        logger.debug(f"{p} normalizzato: titolo_norm={v!r} canale_norm={ch!r}")
+
         score = 0
-        if art_n and art_n in v:  score += SCORE_ARTIST_IN_TITLE
-        if tit_n and tit_n in v:  score += SCORE_TITLE_IN_TITLE
-        if art_n and art_n in ch: score += SCORE_ARTIST_IN_CHANNEL
-        if "topic" in ch:         score += SCORE_TOPIC_CHANNEL
+        if art_n and art_n in v:
+            score += SCORE_ARTIST_IN_TITLE
+            logger.debug(f"{p} artista {art_n!r} presente nel titolo → +{SCORE_ARTIST_IN_TITLE} (tot={score})")
+        if tit_n and tit_n in v:
+            score += SCORE_TITLE_IN_TITLE
+            logger.debug(f"{p} titolo cercato {tit_n!r} presente nel titolo video → +{SCORE_TITLE_IN_TITLE} (tot={score})")
+        if art_n and art_n in ch:
+            score += SCORE_ARTIST_IN_CHANNEL
+            logger.debug(f"{p} artista {art_n!r} presente nel canale → +{SCORE_ARTIST_IN_CHANNEL} (tot={score})")
+        if "topic" in ch:
+            score += SCORE_TOPIC_CHANNEL
+            logger.debug(f"{p} canale 'Topic' → +{SCORE_TOPIC_CHANNEL} (tot={score})")
         for k in YouTubeSearcher._OFFICIAL_KEYWORDS:
-            if k in v: score += SCORE_OFFICIAL_KEYWORD
+            if k in v:
+                score += SCORE_OFFICIAL_KEYWORD
+                logger.debug(f"{p} keyword ufficiale {k!r} nel titolo → +{SCORE_OFFICIAL_KEYWORD} (tot={score})")
         for k in YouTubeSearcher._BAD_KEYWORDS:
-            if k in v: score -= SCORE_BAD_KEYWORD_PENALTY
+            if k in v:
+                score -= SCORE_BAD_KEYWORD_PENALTY
+                logger.debug(f"{p} bad keyword {k!r} nel titolo → -{SCORE_BAD_KEYWORD_PENALTY} (tot={score})")
         if dur and duration:
             diff = abs(dur - duration)
-            if   diff <  5: score += SCORE_DURATION_EXACT
-            elif diff < 15: score += SCORE_DURATION_CLOSE
-            elif diff > 60: score -= SCORE_DURATION_FAR_PENALTY
+            if diff < 5:
+                score += SCORE_DURATION_EXACT
+                logger.debug(f"{p} durata video={dur}s atteso={duration}s diff={diff}s → +{SCORE_DURATION_EXACT} (tot={score})")
+            elif diff < 15:
+                score += SCORE_DURATION_CLOSE
+                logger.debug(f"{p} durata video={dur}s atteso={duration}s diff={diff}s → +{SCORE_DURATION_CLOSE} (tot={score})")
+            elif diff > 60:
+                score -= SCORE_DURATION_FAR_PENALTY
+                logger.debug(f"{p} durata video={dur}s atteso={duration}s diff={diff}s → -{SCORE_DURATION_FAR_PENALTY} (tot={score})")
+            else:
+                logger.debug(f"{p} durata video={dur}s atteso={duration}s diff={diff}s → nessun bonus/penalità (tot={score})")
+        else:
+            logger.debug(f"{p} durata non disponibile per il confronto (video={dur}s, attesa={duration}s)")
         if tit_n:
-            score += int(fuzz.token_sort_ratio(tit_n, v) * SCORE_FUZZY_MULTIPLIER)
-        score -= YouTubeSearcher._extra_words(v, tit_n, art_n) * SCORE_EXTRA_WORD_PENALTY
+            ratio = fuzz.token_sort_ratio(tit_n, v)
+            delta = int(ratio * SCORE_FUZZY_MULTIPLIER)
+            score += delta
+            logger.debug(f"{p} fuzzy token_sort_ratio({tit_n!r}, {v!r})={ratio} × {SCORE_FUZZY_MULTIPLIER} → +{delta} (tot={score})")
+        extra_n = YouTubeSearcher._extra_words(v, tit_n, art_n)
+        if extra_n:
+            penalty = extra_n * SCORE_EXTRA_WORD_PENALTY
+            score -= penalty
+            logger.debug(f"{p} {extra_n} parole extra nel titolo video → -{penalty} (tot={score})")
         if orig_art_n and orig_art_n != art_n:
             if orig_art_n not in v and orig_art_n not in ch:
                 score -= SCORE_ORIGINAL_ARTIST_MISSING_PENALTY
+                logger.debug(f"{p} artista originale {orig_art_n!r} assente da titolo e canale → -{SCORE_ORIGINAL_ARTIST_MISSING_PENALTY} (tot={score})")
+        views = entry.get("view_count") or 0
+        if max_same_artist_views > 0 and views * SCORE_VIEWS_GAP_RATIO < max_same_artist_views:
+            score -= SCORE_VIEWS_GAP_PENALTY
+            logger.debug(
+                f"{p} views={views} ≪ max_stesso_artista={max_same_artist_views} "
+                f"(rapporto ≥{SCORE_VIEWS_GAP_RATIO}x, possibile canale omonimo/impostore) "
+                f"→ -{SCORE_VIEWS_GAP_PENALTY} (tot={score})"
+            )
+        logger.debug(f"{p} punteggio base (prima del bonus primo risultato) = {score}")
         return score
+
+    _SEP = "═" * 100
 
     @staticmethod
     def search(query: str, artist: str = "", title: str = "",
-               duration: int = 0, original_artist: str = "") -> List[str]:
+               duration: int = 0, original_artist: str = "", tag: str = "") -> List[str]:
+        logger.debug(YouTubeSearcher._SEP)
         logger.debug(
-            f"[YouTube] Ricerca: '{query}' "
+            f"[YouTube]{tag} INIZIO RICERCA query='{query}' "
             f"(artista='{artist}', titolo='{title}', durata={duration}s"
             + (f", orig='{original_artist}'" if original_artist and original_artist != artist else "")
             + ")"
@@ -90,38 +167,48 @@ class YouTubeSearcher:
         art_n      = YouTubeSearcher._normalize(artist)
         tit_n      = YouTubeSearcher._normalize(title)
         orig_art_n = YouTubeSearcher._normalize(original_artist)
+        logger.debug(f"[YouTube]{tag} normalizzati (invariati per tutti i candidati): art_n={art_n!r} tit_n={tit_n!r} orig_art_n={orig_art_n!r}")
         try:
-            with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as ydl:
+            ydl_opts = {"quiet": True, "extract_flat": True, "verbose": True,
+                        "logger": YtDlpLogAdapter(tag)}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 results = ydl.extract_info(f"ytsearch{YOUTUBE_RESULTS}:{query}", download=False)
-            entries = [e for e in (results.get("entries") or []) if e]
+            raw_entries = results.get("entries") or []
+            entries = [e for e in raw_entries if e]
+            if len(entries) != len(raw_entries):
+                logger.debug(f"[YouTube]{tag} {len(raw_entries) - len(entries)} entries vuote/None scartate da yt-dlp")
+            logger.debug(f"[YouTube]{tag} yt-dlp ha restituito {len(entries)} risultati grezzi (richiesti {YOUTUBE_RESULTS})")
             if not entries:
-                logger.warning(f"[YouTube] Nessun risultato per: '{query}'")
+                logger.warning(f"[YouTube]{tag} Nessun risultato per: '{query}'")
                 return []
-            scored = sorted(
-                [
-                    (YouTubeSearcher._score(e, art_n, tit_n, duration, orig_art_n)
-                     + (SCORE_FIRST_RESULT_BONUS if i == 0 else 0), e)
-                    for i, e in enumerate(entries)
-                ],
-                key=lambda x: x[0],
-                reverse=True,
-            )
+            max_same_artist_views = YouTubeSearcher._max_same_artist_views(entries, art_n)
+            logger.debug(f"[YouTube]{tag} max views tra i candidati che citano l'artista {art_n!r}: {max_same_artist_views}")
+            scored = []
+            for i, e in enumerate(entries):
+                base = YouTubeSearcher._score(e, art_n, tit_n, duration, orig_art_n, tag=tag, idx=i,
+                                              max_same_artist_views=max_same_artist_views)
+                if i == 0:
+                    logger.debug(f"[Score]{tag} cand#{i + 1} bonus primo risultato yt-dlp → +{SCORE_FIRST_RESULT_BONUS} (tot={base + SCORE_FIRST_RESULT_BONUS})")
+                    base += SCORE_FIRST_RESULT_BONUS
+                scored.append((base, e))
+            scored.sort(key=lambda x: x[0], reverse=True)
             best_score = scored[0][0]
             if best_score < SCORE_MIN_DOWNLOAD:
                 logger.warning(
-                    f"[YouTube] Score troppo basso ({best_score}) per '{query}', download saltato"
+                    f"[YouTube]{tag} Score troppo basso ({best_score}) per '{query}', download saltato"
                 )
                 return []
-            for s, e in scored:
+            for rank, (s, e) in enumerate(scored, start=1):
                 views = e.get("view_count") or 0
                 logger.debug(
-                    f"[YouTube] Score={s:3d}  cercato='{title[:30]}'  "
+                    f"[YouTube]{tag} CLASSIFICA #{rank}  Score={s:3d}  cercato='{title[:30]}'  "
                     f"views={views:>10,}  canale='{e.get('uploader', '?')[:25]}'  "
+                    f"channel_id={e.get('channel_id', '?')}  id={e.get('id', '?')}  "
                     f"titolo='{e.get('title', '?')[:60]}'"
                 )
             urls = [e["url"] for _, e in scored]
-            logger.debug(f"[YouTube] {len(urls)} risultati, primo: {urls[0] if urls else 'nessuno'}")
+            logger.debug(f"[YouTube]{tag} FINE RICERCA: {len(urls)} URL ordinati, scelto: {urls[0] if urls else 'nessuno'}")
             return urls
         except Exception as e:
-            logger.error(f"[YouTube] Errore ricerca '{query}': {e}")
+            logger.error(f"[YouTube]{tag} Errore ricerca '{query}': {e}")
         return []

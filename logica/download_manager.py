@@ -37,30 +37,35 @@ class DownloadManager:
 
     def get_genre(self, album_id: str) -> tuple:
         if not album_id:
+            logger.debug("[Genre] get_genre chiamato senza album_id, ritorno ('', 0)")
             return "", 0
         if album_id in self._genre_cache:
+            logger.debug(f"[Genre] cache hit per album_id={album_id}: genre={self._genre_cache[album_id]!r}")
             return self._genre_cache[album_id], self._nb_tracks_cache.get(album_id, 0)
         try:
             details   = self._searcher.get_album_details(int(album_id))
             genre     = details.get("genre", "")
             nb_tracks = details.get("nb_tracks", 0)
+            logger.debug(f"[Genre] cache miss per album_id={album_id}, richiesto a Deezer: genre={genre!r} nb_tracks={nb_tracks}")
             self.prime_genre_cache(album_id, genre, nb_tracks)
             return genre, nb_tracks
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[Genre] errore recupero dettagli album_id={album_id}: {e}")
             return "", 0
 
     def prime_genre_cache(self, album_id: str, genre: str, nb_tracks: int) -> None:
         """Permette di riusare dettagli album gia' scaricati altrove (es. dalla
         UI durante la navigazione) evitando una chiamata API ridondante."""
+        logger.debug(f"[Genre] prime_genre_cache album_id={album_id} genre={genre!r} nb_tracks={nb_tracks}")
         self._genre_cache[album_id]     = genre
         self._nb_tracks_cache[album_id] = nb_tracks
 
     # ── Risoluzione URL / metadati traccia ──────────────────────
 
-    def resolve_url(self, item: QueueItem) -> List[str]:
+    def resolve_url(self, item: QueueItem, tag: str = "") -> List[str]:
         cached = self._yt_url_cache.get(item.query)
         if cached:
-            logger.debug(f"[Cache] YouTube hit: '{item.query}'")
+            logger.debug(f"[Cache]{tag} YouTube hit: '{item.query}' → {cached[0]}")
             return cached
         meta = item.meta or {}
         urls = YouTubeSearcher.search(
@@ -69,26 +74,30 @@ class DownloadManager:
             title           = meta.get("title", ""),
             duration        = meta.get("duration", 0),
             original_artist = meta.get("albumartist", ""),
+            tag             = tag,
         )
         if urls:
             self._yt_url_cache[item.query] = urls
         return urls
 
     def prepare_meta(self, item: QueueItem, genre_info: tuple = None) -> dict:
-        meta             = dict(item.meta or {})
+        meta_before      = dict(item.meta or {})
+        meta             = dict(meta_before)
         genre, nb_tracks = genre_info if genre_info is not None \
                            else self.get_genre(meta.get("album_id", ""))
         if genre:
             meta["genre"] = genre
         if meta.get("tracknumber") and nb_tracks:
             meta["tracknumber"] = f"{meta['tracknumber']}/{nb_tracks}"
+        if meta != meta_before:
+            logger.debug(f"[Meta] prepare_meta per '{item.label}': {meta_before} → {meta}")
         return meta
 
     # ── Download singola traccia ────────────────────────────────
 
     def download_single(self, item: QueueItem, destination: str,
                         progress_cb=None, genre_info: tuple = None,
-                        urls: List[str] = None) -> tuple:
+                        urls: List[str] = None, tag: str = "") -> tuple:
         dest     = item.destination or destination
         meta     = self.prepare_meta(item, genre_info)
         title    = meta.get("title") or item.label
@@ -96,31 +105,39 @@ class DownloadManager:
         raw_name = f"{artist} - {title}" if artist else title
         filename = sanitize_filename(raw_name)
 
-        logger.info(f"[Download] Inizio: '{item.label}' → query='{item.query}'")
+        logger.info(f"{'─' * 90}")
+        logger.info(f"[Download]{tag} Inizio: '{item.label}' → query='{item.query}' "
+                    f"(artist={artist!r}, title={title!r}, meta={meta})")
 
         if Path(dest, f"{filename}.mp3").exists():
-            logger.info(f"[Download] Saltato (già esiste): {filename}.mp3")
+            logger.info(f"[Download]{tag} Saltato (già esiste): {filename}.mp3")
+            logger.info(f"{'─' * 90}")
             return True, None
 
         if urls is None:
-            urls = self.resolve_url(item)
+            urls = self.resolve_url(item, tag=tag)
         if not urls:
-            logger.warning(f"[Download] Nessun URL trovato per: '{item.label}'")
+            logger.warning(f"[Download]{tag} Nessun URL trovato per: '{item.label}'")
+            logger.info(f"{'─' * 90}")
             return False, item.label
 
+        logger.debug(f"[Download]{tag} {len(urls)} URL candidati in ordine di score: {urls}")
         for i, url in enumerate(urls):
             try:
-                logger.debug(f"[Download] Tentativo {i+1}/{len(urls)}: {url}")
+                logger.debug(f"[Download]{tag} Tentativo {i+1}/{len(urls)}: {url}")
                 filepath = AudioDownloader.download(url, dest, filename=filename,
-                                                    progress_callback=progress_cb)
-                tag_file(filepath, meta)
-                logger.info(f"[Download] Completato: {filepath}")
+                                                    progress_callback=progress_cb, tag=tag)
+                logger.debug(f"[Download]{tag} File scaricato: {filepath}, applico i tag ID3")
+                tag_file(filepath, meta, tag=tag)
+                logger.info(f"[Download]{tag} Completato: {filepath}")
+                logger.info(f"{'─' * 90}")
                 return True, None
             except Exception as e:
-                logger.warning(f"[Download] URL {i+1} fallito per '{item.label}': {e}")
+                logger.warning(f"[Download]{tag} URL {i+1} fallito per '{item.label}': {e}")
                 continue
 
-        logger.error(f"[Download] Tutti gli URL esauriti per: '{item.label}'")
+        logger.error(f"[Download]{tag} Tutti gli URL esauriti per: '{item.label}'")
+        logger.info(f"{'─' * 90}")
         return False, item.label
 
     # ── Batch (coda intera) ──────────────────────────────────────
@@ -157,12 +174,16 @@ class DownloadManager:
         thread worker che li genera: se il chiamante deve aggiornare una UI,
         e' suo compito marshalizzarli sul thread principale."""
         total      = len(queue)
+        width      = len(str(total)) if total else 1
         lock       = threading.Lock()
         state      = {"successi": 0, "falliti": [], "completed": 0}
         search_q:   Queue = Queue()
         download_q: Queue = Queue()
 
+        logger.info(f"[Batch] {'#' * 90}")
         logger.info(f"[Batch] Inizio download: {total} tracce → {destination}")
+        for idx, item in enumerate(queue):
+            logger.debug(f"[Batch] Coda #{idx + 1:0{width}d}/{total}: '{item.label}' query='{item.query}'")
 
         def resolver():
             seen: set = set()
@@ -172,30 +193,32 @@ class DownloadManager:
                     if aid and aid not in seen:
                         seen.add(aid)
                         self.get_genre(aid)
-            for item in queue:
+            for idx, item in enumerate(queue):
                 if self.cancel_event.is_set():
                     break
-                search_q.put(item)
+                search_q.put((idx, item))
             for _ in range(self._search_workers):
                 search_q.put(None)
 
         def search_worker():
             while True:
-                item = search_q.get()
-                if item is None:
+                entry = search_q.get()
+                if entry is None:
                     break
+                idx, item = entry
+                item_tag = f"[#{idx + 1:0{width}d}/{total}]"
                 if self.cancel_event.is_set():
-                    download_q.put((item, []))
+                    download_q.put((item, [], item_tag))
                     continue
-                urls = self.resolve_url(item)
-                download_q.put((item, urls))
+                urls = self.resolve_url(item, tag=item_tag)
+                download_q.put((item, urls, item_tag))
 
         def download_worker():
             while True:
                 entry = download_q.get()
                 if entry is None:
                     break
-                item, urls = entry
+                item, urls, item_tag = entry
                 item_id = id(item)
 
                 if self.cancel_event.is_set():
@@ -203,7 +226,7 @@ class DownloadManager:
                         state["completed"] += 1
                         state["falliti"].append(f"{item.label} (annullato)")
                         c = state["completed"]
-                    logger.info(f"[Download] Annullato: '{item.label}'")
+                    logger.info(f"[Download]{item_tag} Annullato: '{item.label}'")
                     if on_track_completed:
                         on_track_completed(item, item_id, False, c, total)
                     continue
@@ -217,10 +240,10 @@ class DownloadManager:
 
                 try:
                     ok, err = self.download_single(item, destination, progress_cb,
-                                                   genre_info, urls=urls)
+                                                   genre_info, urls=urls, tag=item_tag)
                 except Exception as e:
                     logger.error(
-                        f"[Worker] Eccezione non gestita per '{item.label}': {e}", exc_info=True)
+                        f"[Worker]{item_tag} Eccezione non gestita per '{item.label}': {e}", exc_info=True)
                     ok, err = False, f"{item.label} ({str(e)[:40]})"
 
                 with lock:
@@ -255,6 +278,10 @@ class DownloadManager:
             f"[Batch] Fine: {state['successi']}/{total} successi, "
             f"{len(state['falliti'])} falliti"
         )
+        if state["falliti"]:
+            for f in state["falliti"]:
+                logger.info(f"[Batch] Fallita: {f}")
+        logger.info(f"[Batch] {'#' * 90}")
 
         self._cache.add_download(
             self._history_entry(queue, destination, artist_name, state["successi"])
