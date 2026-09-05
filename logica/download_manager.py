@@ -3,13 +3,13 @@ from pathlib import Path
 from queue import Queue
 from typing import Callable, List, Optional
 
-from cache import CacheManager
-from config import logger
-from downloader import AudioDownloader, tag_file
-from helpers import sanitize_filename
-from models import QueueItem
-from searcher import MusicSearcher
-from youtube import YouTubeSearcher
+from .cache import CacheManager
+from .config import logger
+from .downloader import AudioDownloader, tag_file
+from .text_utils import sanitize_filename
+from .models import QueueItem
+from .searcher import MusicSearcher
+from .youtube import YouTubeSearcher
 
 
 class DownloadManager:

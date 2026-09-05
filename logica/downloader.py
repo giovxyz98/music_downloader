@@ -7,11 +7,11 @@ import yt_dlp
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
 
-from config import (
+from .config import (
     logger,
     PREFERRED_QUALITY, SOCKET_TIMEOUT, RETRIES, DOWNLOAD_TIMEOUT,
 )
-from helpers import sanitize_filename
+from .text_utils import sanitize_filename
 
 
 def tag_file(filepath: str, meta: dict) -> None:

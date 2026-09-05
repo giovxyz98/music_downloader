@@ -3,6 +3,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+# Radice del progetto: logica/config.py -> logica/ -> root
+ROOT_DIR = Path(__file__).resolve().parent.parent
+
 # ─────────────────────────────────────────────────────────────
 # Palette
 # ─────────────────────────────────────────────────────────────
@@ -23,7 +26,7 @@ BORDER  = "#4b5563"
 logger = logging.getLogger("music_downloader")
 if not logger.handlers:
     logger.setLevel(logging.DEBUG)
-    _log_file = Path(__file__).parent / "music_downloader.log"
+    _log_file = ROOT_DIR / "music_downloader.log"
     _fh = RotatingFileHandler(_log_file, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
     _fh.setLevel(logging.DEBUG)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -69,7 +72,7 @@ _CFG_DEFAULTS: dict = {
     "SEARCH_WORKERS":             2,
 }
 
-_cfg_file = Path(__file__).parent / "config.json"
+_cfg_file = ROOT_DIR / "config.json"
 try:
     with open(_cfg_file, "r", encoding="utf-8") as _f:
         _cfg = {**_CFG_DEFAULTS, **json.load(_f)}

@@ -1,0 +1,12 @@
+1. [RISOLTO] Falso positivo per il canale "Topic" — riga 21
+Per Parlame e Te di Gianni Celeste, il risultato primo (score 95) è di "Gianni Fiorellino - Topic", quindi incassa il +25 del topic channel. Ma l'artista cercato è Gianni Celeste, non Fiorellino. Il titolo "Parlame 'e te" probabilmente appartiene a Fiorellino, non a Celeste. Il secondo risultato (score 93) con canale "Gianni Celeste" è quasi certamente quello giusto, ma perde di 2 punti. Il bonus SCORE_TOPIC_CHANNEL non verifica che il canale Topic appartenga all'artista corretto — basta che nel nome canale ci sia la parola "topic".
+Fix: aggiunta SCORE_ORIGINAL_ARTIST_MISSING_PENALTY (-35) quando l'album artist cercato non compare né nel titolo né nel canale del video — penalizza "Gianni Fiorellino - Topic" e lascia vincere il risultato con "Gianni Celeste" nel canale (vedi Modifiche effettuate.txt #73).
+
+2. Traccia "Tu e lei..." con score penalizzato — riga 87
+Il video più popolare con 3,9 milioni di views è "Gianni Celeste, Giusy Attanasio, Il Prince - Tu e Lei..." (riga 87) ma ottiene solo 56 contro l'84 del primo. Il motivo probabile: ha artisti extra nel titolo ("Attanasio", "Prince") che vengono conteggiati come parole extra → penalità -10 ciascuna. Ma potrebbe essere proprio la versione giusta (feat). Non è un bug, però è un comportamento da tenere d'occhio: le collaborazioni perdono punti rispetto a versioni meno note.
+
+3. WARNING sul medley — riga 1672–1673
+Un caso legittimo: il titolo è un medley di 7 canzoni (16+ parole), duration 995 secondi (~16 minuti). Probabilmente YouTube non ha un video con quel titolo identico, lo score crolla a -1 e viene saltato giustamente. Nessun bug qui, è il sistema che funziona come atteso.
+
+4. Tracce "(Live)" — comportamento tendenzialmente corretto ma con margine
+Per le tracce marcate (Live) da Deezer (riga 746, 760, 802, ecc.), il sistema generalmente trova il video Live giusto al primo posto — bene. Però "live" è nella lista delle parole indesiderate con -25. Questo crea una situazione paradossale: quando cerchi esplicitamente una traccia live, il bonus +20 del primo risultato e gli altri bonus di matching si scontrano con -25 per la parola "live" nel titolo YouTube. Il sistema funziona ugualmente grazie agli altri bonus, ma lo score potrebbe essere artificialmente depresso su tracce live legittime.

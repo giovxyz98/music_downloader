@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from models import QueueItem
+from .models import QueueItem
 
 
 class QueueManager:

@@ -4,11 +4,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
-from config import logger, MAX_SEARCHES, MAX_HISTORY, RECENT_SEARCHES_SHOWN
+from .config import logger, MAX_SEARCHES, MAX_HISTORY, RECENT_SEARCHES_SHOWN, ROOT_DIR
 
 
 class CacheManager:
-    CACHE_FILE = Path(__file__).parent / "music_cache.json"
+    CACHE_FILE = ROOT_DIR / "music_cache.json"
 
     def __init__(self):
         self._lock = threading.Lock()

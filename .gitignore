@@ -1,17 +1,28 @@
 # Ignora tutto per default
 *
 
-# Includi file specifici
+# Includi le cartelle del progetto (necessario: senza questo, la regola
+# "*" sopra le ignora e le regole !*.py sotto non avrebbero effetto,
+# perché git non scende dentro una cartella già ignorata)
+!/logica/
+!/ui/
+!/docs/
+
+# Includi file specifici in root
 !.gitignore
 !README.md
-!*.txt
 !music_downloader.py
+!test_pipeline.py
 !start.bat
 !config.json
 !requirements.txt
 
-# Includi file Python
-!*.py
+# Includi i .py dentro le cartelle del progetto
+!/logica/*.py
+!/ui/*.py
+
+# Includi le note dentro docs/
+!/docs/*.txt
 
 # Escludi sempre
 **/__pycache__/

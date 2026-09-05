@@ -7,11 +7,11 @@ Uso:
 import sys
 import logging
 sys.stdout.reconfigure(encoding="utf-8")
-from config import logger
+from logica.config import logger
 logger.handlers[1].setLevel(logging.DEBUG)  # handlers[1] = StreamHandler (console)
 
-from searcher import MusicSearcher
-from youtube import YouTubeSearcher
+from logica.searcher import MusicSearcher
+from logica.youtube import YouTubeSearcher
 
 
 def run(artist_query: str, album_filter: str = ""):

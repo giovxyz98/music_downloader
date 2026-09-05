@@ -1,0 +1,84 @@
+DOCUMENTO DI REVISIONE ARCHITETTURALE
+Progetto: Music Downloader (Python + CustomTkinter + yt-dlp)
+
+════════════════════════════════════════════════════════════════
+SEZIONE A — DA FARE (cose decise, implementate)
+════════════════════════════════════════════════════════════════
+
+[FATTO] A1. Eliminazione cover art
+[FATTO] A2. Miglioramenti scoring YouTube
+[FATTO] A3. Skip download se score < soglia minima
+[FATTO] A4. Cache URL YouTube solo in-memory (rimossa da file)
+[FATTO] A5. Normalizzazione chiavi cache Deezer
+[SKIP]  A6. Retry adapter requests.Session — retry manuale in _get già sufficiente
+[FATTO] A7. Filename MP3 trovato con glob invece di costruirlo manualmente
+[FATTO] A8. Penalità scoring per artista originale mancante (falsi positivi tipo "Fiorellino" al posto di "Celeste")
+[FATTO] A9. Separazione layer: QueueManager, SearchController, DownloadManager estratti da app.py — risolve B1 del giro precedente
+[FATTO] A10. music_downloader.py come composition root (main leggibile: costruisce le dipendenze e le inietta prima di avviare la UI)
+[FATTO] A11. Aggiornamento yt-dlp 2026.3.17 → 2026.8.19 (i download reali fallivano con HTTP 403)
+
+════════════════════════════════════════════════════════════════
+SEZIONE B — PROBLEMI ARCHITETTURALI (rivalutati in questo giro)
+════════════════════════════════════════════════════════════════
+
+1. [RISOLTO] Classe troppo grande
+
+MusicDownloaderApp faceva UI, orchestrazione download, pipeline worker,
+cache orchestration, navigazione, business logic tutto insieme.
+Ora delega a QueueManager (coda), SearchController (ricerca Deezer +
+cronologia ricerche) e DownloadManager (risoluzione URL, metadati,
+download, tagging, pipeline a 3 stadi, cronologia download) — nessuno dei
+tre dipende da tkinter. app.py resta responsabile solo di widget,
+navigazione e dialoghi, e li riceve per dependency injection.
+
+2. [PARZIALE] Troppa logica nei callback UI
+
+_download_albums_batch e _download_album_direct in app.py fanno ancora,
+nello stesso metodo: chiamata API (get_album_tracks), filesystem (mkdir
+cartella per album), costruzione della coda (QueueItem per ogni traccia)
+e avvio del thread di download. Andrebbe estratto un metodo tipo
+DownloadManager.build_queue_from_albums(albums, destination) che
+restituisce la coda già pronta, lasciando ad app.py solo la scelta della
+cartella e l'avvio del batch.
+
+3. [APERTO] Mancanza rate limiting API
+
+Se l'utente fa molte ricerche rapide (search_artist, search_track,
+get_album_tracks, get_album_details) rischia di saturare l'API Deezer.
+Il singolo time.sleep(0.1) in MusicSearcher._get() non basta se più
+ricerche partono in parallelo dai thread UI. Meglio aggiungere un
+Semaphore o RateLimiter condiviso.
+
+4. [APERTO, spostato] Cache in-memoria senza limite
+
+_genre_cache e _nb_tracks_cache ora vivono in DownloadManager (non più
+in app.py) ma restano dizionari senza limite di dimensione. Andrebbero
+gestiti con la stessa eviction FIFO già presente in
+MusicSearcher._cache_set (CACHE_MAXSIZE).
+
+5. [APERTO] Possibile frammentazione widget
+
+In _show_download_panel:
+    for w in self.queue_panel.winfo_children(): w.destroy()
+Funziona ma ricrea tutti i widget ad ogni avvio/reset del pannello
+download. Non bloccante, ma da tenere d'occhio su sessioni lunghe con
+molti batch di download consecutivi.
+
+6. [APERTO] Dedup coda O(n)
+
+QueueManager.add() controlla i duplicati con un ciclo lineare su tutta
+la coda (any(item.query == query ...)). Con code molto lunghe (interi
+discografie aggiunte in una volta) converrebbe tenere anche un set delle
+query già in coda.
+
+7. [NUOVO] Nessun test automatico
+
+QueueManager, SearchController e DownloadManager sono ora isolati e
+testabili senza avviare tkinter, ma non esiste ancora una test suite:
+l'unica verifica automatizzabile è test_pipeline.py, che è comunque un
+dry-run manuale pensato per lo scoring, non un test. Varrebbe la pena
+aggiungere test unitari almeno per QueueManager (dedup, remove_indices)
+e DownloadManager (prepare_meta, _history_entry, gestione fallimenti in
+download_single) ora che è possibile farlo senza GUI.
+
+FINE DOCUMENTO

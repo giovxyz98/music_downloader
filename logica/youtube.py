@@ -5,7 +5,7 @@ from typing import List
 import yt_dlp
 from rapidfuzz import fuzz
 
-from config import (
+from .config import (
     logger,
     YOUTUBE_RESULTS,
     SCORE_ARTIST_IN_TITLE, SCORE_TITLE_IN_TITLE, SCORE_ARTIST_IN_CHANNEL,

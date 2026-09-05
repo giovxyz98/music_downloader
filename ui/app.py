@@ -12,17 +12,18 @@ import customtkinter as ctk
 import requests
 import yt_dlp
 
-from config import (
+from logica.config import (
     logger,
     BG, PANEL, CARD, ACCENT, ACCENT2, TEXT, SUBTEXT, ERROR, BORDER,
     HISTORY_MENU_MAX, RECENT_SEARCHES_SHOWN,
 )
-from cache import CacheManager
-from download_manager import DownloadManager
-from models import Artist, Album, Track, QueueItem
-from queue_manager import QueueManager
-from search_controller import SearchController
-from helpers import scrolled_tree, sanitize_filename
+from logica.cache import CacheManager
+from logica.download_manager import DownloadManager
+from logica.models import Artist, Album, Track, QueueItem
+from logica.queue_manager import QueueManager
+from logica.search_controller import SearchController
+from logica.text_utils import sanitize_filename
+from .widgets import scrolled_tree
 
 
 class MusicDownloaderApp:

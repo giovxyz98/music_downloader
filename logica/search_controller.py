@@ -1,8 +1,8 @@
 from typing import Dict, List
 
-from cache import CacheManager
-from models import Album, Artist, Track
-from searcher import MusicSearcher
+from .cache import CacheManager
+from .models import Album, Artist, Track
+from .searcher import MusicSearcher
 
 
 class SearchController:

@@ -4,14 +4,14 @@ e download, prima di avviare la UI. E' l'unico punto da cui si vede come le
 parti del programma si compongono."""
 import customtkinter as ctk
 
-from cache import CacheManager
-from config import MAX_WORKERS, SEARCH_WORKERS
-from downloader import AudioDownloader
-from download_manager import DownloadManager
-from queue_manager import QueueManager
-from search_controller import SearchController
-from searcher import MusicSearcher
-from app import MusicDownloaderApp
+from logica.cache import CacheManager
+from logica.config import MAX_WORKERS, SEARCH_WORKERS
+from logica.downloader import AudioDownloader
+from logica.download_manager import DownloadManager
+from logica.queue_manager import QueueManager
+from logica.search_controller import SearchController
+from logica.searcher import MusicSearcher
+from ui.app import MusicDownloaderApp
 
 
 def main():
