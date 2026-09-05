@@ -12,7 +12,7 @@ from config import (
     SCORE_TOPIC_CHANNEL, SCORE_OFFICIAL_KEYWORD, SCORE_BAD_KEYWORD_PENALTY,
     SCORE_DURATION_EXACT, SCORE_DURATION_CLOSE, SCORE_DURATION_FAR_PENALTY,
     SCORE_FUZZY_MULTIPLIER, SCORE_FIRST_RESULT_BONUS, SCORE_EXTRA_WORD_PENALTY,
-    SCORE_MIN_DOWNLOAD,
+    SCORE_ORIGINAL_ARTIST_MISSING_PENALTY, SCORE_MIN_DOWNLOAD,
 )
 
 
@@ -47,8 +47,11 @@ class YouTubeSearcher:
         return len(words)
 
     @staticmethod
-    def _score(entry: dict, art_n: str, tit_n: str, duration: int) -> int:
-        """art_n e tit_n devono essere già normalizzati dal chiamante."""
+    def _score(entry: dict, art_n: str, tit_n: str, duration: int,
+               orig_art_n: str = "") -> int:
+        """art_n e tit_n devono essere già normalizzati dal chiamante.
+        orig_art_n è l'artista originalmente cercato (album artist); se diverso
+        da art_n e assente nel video, viene applicata una penalità."""
         v   = YouTubeSearcher._normalize(entry.get("title", ""))
         ch  = YouTubeSearcher._normalize(entry.get("uploader", "") or entry.get("channel", ""))
         dur = entry.get("duration") or 0
@@ -70,17 +73,23 @@ class YouTubeSearcher:
         if tit_n:
             score += int(fuzz.token_sort_ratio(tit_n, v) * SCORE_FUZZY_MULTIPLIER)
         score -= YouTubeSearcher._extra_words(v, tit_n, art_n) * SCORE_EXTRA_WORD_PENALTY
+        if orig_art_n and orig_art_n != art_n:
+            if orig_art_n not in v and orig_art_n not in ch:
+                score -= SCORE_ORIGINAL_ARTIST_MISSING_PENALTY
         return score
 
     @staticmethod
     def search(query: str, artist: str = "", title: str = "",
-               duration: int = 0) -> List[str]:
+               duration: int = 0, original_artist: str = "") -> List[str]:
         logger.debug(
             f"[YouTube] Ricerca: '{query}' "
-            f"(artista='{artist}', titolo='{title}', durata={duration}s)"
+            f"(artista='{artist}', titolo='{title}', durata={duration}s"
+            + (f", orig='{original_artist}'" if original_artist and original_artist != artist else "")
+            + ")"
         )
-        art_n = YouTubeSearcher._normalize(artist)
-        tit_n = YouTubeSearcher._normalize(title)
+        art_n      = YouTubeSearcher._normalize(artist)
+        tit_n      = YouTubeSearcher._normalize(title)
+        orig_art_n = YouTubeSearcher._normalize(original_artist)
         try:
             with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as ydl:
                 results = ydl.extract_info(f"ytsearch{YOUTUBE_RESULTS}:{query}", download=False)
@@ -90,7 +99,7 @@ class YouTubeSearcher:
                 return []
             scored = sorted(
                 [
-                    (YouTubeSearcher._score(e, art_n, tit_n, duration)
+                    (YouTubeSearcher._score(e, art_n, tit_n, duration, orig_art_n)
                      + (SCORE_FIRST_RESULT_BONUS if i == 0 else 0), e)
                     for i, e in enumerate(entries)
                 ],

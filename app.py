@@ -852,9 +852,10 @@ class MusicDownloaderApp:
         meta = item.meta or {}
         urls = YouTubeSearcher.search(
             item.query,
-            artist   = meta.get("artist", ""),
-            title    = meta.get("title", ""),
-            duration = meta.get("duration", 0),
+            artist          = meta.get("artist", ""),
+            title           = meta.get("title", ""),
+            duration        = meta.get("duration", 0),
+            original_artist = meta.get("albumartist", ""),
         )
         if urls:
             self._yt_url_cache[item.query] = urls

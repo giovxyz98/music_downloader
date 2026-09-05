@@ -6,6 +6,7 @@ Uso:
 """
 import sys
 import logging
+sys.stdout.reconfigure(encoding="utf-8")
 from config import logger
 logger.handlers[1].setLevel(logging.DEBUG)  # handlers[1] = StreamHandler (console)
 
@@ -52,7 +53,8 @@ def run(artist_query: str, album_filter: str = ""):
             print(f"  [{track.numero:02d}] {track.nome}  ({track.duration}s)  → '{query}'")
             # I punteggi escono dai logger.debug già presenti in YouTubeSearcher.search
             urls = YouTubeSearcher.search(query, artist=art, title=track.nome,
-                                          duration=track.duration)
+                                          duration=track.duration,
+                                          original_artist=artist.nome)
             if not urls:
                 print("       ✗ nessun risultato\n")
             else:

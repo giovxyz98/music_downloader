@@ -12,7 +12,7 @@ class CacheManager:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self.data: dict = {"recent_searches": [], "download_history": {}}
+        self.data: dict = {"recent_searches": [], "download_history": []}
         self._load()
 
     def _load(self):
