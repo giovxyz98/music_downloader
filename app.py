@@ -3,7 +3,6 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from queue import Queue
 from tkinter import filedialog, messagebox
 import tkinter as tk
 from tkinter import ttk
@@ -16,25 +15,23 @@ import yt_dlp
 from config import (
     logger,
     BG, PANEL, CARD, ACCENT, ACCENT2, TEXT, SUBTEXT, ERROR, BORDER,
-    MAX_WORKERS, SEARCH_WORKERS, HISTORY_MENU_MAX, RECENT_SEARCHES_SHOWN,
-    FILENAME_MAX_LENGTH,
+    HISTORY_MENU_MAX, RECENT_SEARCHES_SHOWN,
 )
 from cache import CacheManager
+from download_manager import DownloadManager
 from models import Artist, Album, Track, QueueItem
-from searcher import MusicSearcher
-from downloader import AudioDownloader, tag_file
-from youtube import YouTubeSearcher
+from queue_manager import QueueManager
+from search_controller import SearchController
 from helpers import scrolled_tree, sanitize_filename
-
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
 
 
 class MusicDownloaderApp:
 
     SORT_OPTIONS = ["Nome A→Z", "Nome Z→A", "Anno ↑", "Anno ↓"]
 
-    def __init__(self, root: ctk.CTk):
+    def __init__(self, root: ctk.CTk, search_controller: SearchController,
+                 queue_manager: QueueManager, download_manager: DownloadManager,
+                 cache: CacheManager):
         self.root = root
         self.root.title("Music Downloader")
         self.root.geometry("1020x660")
@@ -44,27 +41,23 @@ class MusicDownloaderApp:
 
         self._setup_style()
 
-        self.searcher   = MusicSearcher()
-        self.downloader = AudioDownloader()
-        self.cache      = CacheManager()
+        self.search_controller = search_controller
+        self.queue_manager     = queue_manager
+        self.download_manager  = download_manager
+        self.cache              = cache
 
         # ThreadPoolExecutor per operazioni UI/Deezer: max 2 thread concorrenti
         self._ui_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ui")
 
-        self.download_queue:   List[QueueItem] = []
         self.current_artist:   Optional[Artist] = None
         self.current_albums:   List[Album] = []
         self.filtered_albums:  List[Album] = []
         self.current_tracks:   List[Track] = []
-        self._genre_cache:     dict = {}
-        self._nb_tracks_cache: dict = {}
-        self._yt_url_cache:    dict = {}
 
         self._dl_general_bar:   Optional[ctk.CTkProgressBar] = None
         self._dl_general_label: Optional[ctk.CTkLabel]       = None
         self._dl_total:         int                           = 0
         self._track_widgets:    dict                          = {}
-        self._cancel_event:     threading.Event               = threading.Event()
 
         self._setup_menubar()
         self._build_layout()
@@ -262,7 +255,7 @@ class MusicDownloaderApp:
         self._dl_general_bar.pack(fill="x", pady=2)
 
         ctk.CTkButton(self.queue_panel, text="Annulla download",
-                      command=self._cancel_event.set,
+                      command=self.download_manager.cancel_event.set,
                       fg_color=PANEL, hover_color=CARD, text_color=SUBTEXT,
                       font=("Segoe UI", 9), corner_radius=6).pack(fill="x", padx=8, pady=(2, 8))
 
@@ -385,7 +378,7 @@ class MusicDownloaderApp:
     def _do_artist_search(self, query: str):
         def _work():
             try:
-                artists = self.searcher.search_artist(query)
+                artists = self.search_controller.search_artist(query)
             except Exception as e:
                 self.root.after(0, lambda: self.search_status.configure(
                     text=f"Errore: {e}", text_color=ERROR))
@@ -394,7 +387,6 @@ class MusicDownloaderApp:
                 self.root.after(0, lambda: self.search_status.configure(
                     text="Nessun artista trovato.", text_color=ERROR))
                 return
-            self.cache.add_search("artista", query)
             if len(artists) == 1:
                 self.current_artist = artists[0]
                 self.root.after(0, self._show_albums)
@@ -405,7 +397,7 @@ class MusicDownloaderApp:
     def _do_track_search(self, query: str):
         def _work():
             try:
-                tracks = self.searcher.search_track(query)
+                tracks = self.search_controller.search_track(query)
             except Exception as e:
                 self.root.after(0, lambda: self.search_status.configure(
                     text=f"Errore: {e}", text_color=ERROR))
@@ -414,7 +406,6 @@ class MusicDownloaderApp:
                 self.root.after(0, lambda: self.search_status.configure(
                     text="Nessuna canzone trovata.", text_color=ERROR))
                 return
-            self.cache.add_search("canzone", query)
             self.root.after(0, self._show_track_results, tracks)
         self._ui_executor.submit(_work)
 
@@ -591,7 +582,7 @@ class MusicDownloaderApp:
 
         def _fetch():
             try:
-                albums = self.searcher.get_artist_albums(self.current_artist.id)
+                albums = self.search_controller.get_artist_albums(self.current_artist.id)
             except Exception as e:
                 self.root.after(0, lambda: status.configure(
                     text=f"Errore: {e}", text_color=ERROR))
@@ -671,7 +662,7 @@ class MusicDownloaderApp:
 
         def _fetch():
             try:
-                tracks = self.searcher.get_album_tracks(album.id)
+                tracks = self.search_controller.get_album_tracks(album.id)
             except Exception as e:
                 self.root.after(0, lambda: status.configure(
                     text=f"Errore: {e}", text_color=ERROR))
@@ -772,10 +763,9 @@ class MusicDownloaderApp:
             )
 
     def _add_to_queue(self, query: str, label: str, meta: dict = None):
-        if any(item.query == query for item in self.download_queue):
+        item = self.queue_manager.add(query, label, meta)
+        if item is None:
             return
-        item = QueueItem(query=query, label=label, meta=meta or {})
-        self.download_queue.append(item)
         self.queue_listbox.insert(tk.END, f"  {item.label}")
         self._refresh_queue_ui()
 
@@ -783,22 +773,23 @@ class MusicDownloaderApp:
         idx = self.queue_listbox.nearest(event.y)
         if idx >= 0:
             self.queue_listbox.delete(idx)
-            self.download_queue.pop(idx)
+            self.queue_manager.remove_at(idx)
             self._refresh_queue_ui()
 
     def _remove_from_queue(self):
-        for idx in reversed(self.queue_listbox.curselection()):
+        indices = list(self.queue_listbox.curselection())
+        for idx in reversed(indices):
             self.queue_listbox.delete(idx)
-            self.download_queue.pop(idx)
+        self.queue_manager.remove_indices(indices)
         self._refresh_queue_ui()
 
     def _clear_queue(self):
         self.queue_listbox.delete(0, tk.END)
-        self.download_queue.clear()
+        self.queue_manager.clear()
         self._refresh_queue_ui()
 
     def _refresh_queue_ui(self):
-        n = len(self.download_queue)
+        n = len(self.queue_manager)
         self.queue_count_label.configure(text=f"{n} {'canzone' if n == 1 else 'canzoni'}")
         self.btn_download.configure(state="normal" if n > 0 else "disabled")
 
@@ -808,8 +799,8 @@ class MusicDownloaderApp:
         destination = filedialog.askdirectory(title="Seleziona cartella di destinazione")
         if not destination:
             return
-        queue = list(self.download_queue)
-        self._cancel_event.clear()
+        queue = self.queue_manager.items
+        self.download_manager.cancel_event.clear()
         self.btn_download.configure(state="disabled")
         self._show_download_panel(queue)
         threading.Thread(
@@ -819,209 +810,28 @@ class MusicDownloaderApp:
             daemon=True,
         ).start()
 
-    def _get_genre(self, album_id: str) -> tuple:
-        if not album_id:
-            return "", 0
-        if album_id in self._genre_cache:
-            return self._genre_cache[album_id], self._nb_tracks_cache.get(album_id, 0)
-        try:
-            details = self.searcher.get_album_details(int(album_id))
-            genre     = details.get("genre", "")
-            nb_tracks = details.get("nb_tracks", 0)
-            self._genre_cache[album_id]     = genre
-            self._nb_tracks_cache[album_id] = nb_tracks
-            return genre, nb_tracks
-        except Exception:
-            return "", 0
-
-    def _prepare_meta(self, item: QueueItem, genre_info: tuple = None) -> dict:
-        meta             = dict(item.meta or {})
-        genre, nb_tracks = genre_info if genre_info is not None \
-                           else self._get_genre(meta.get("album_id", ""))
-        if genre:
-            meta["genre"] = genre
-        if meta.get("tracknumber") and nb_tracks:
-            meta["tracknumber"] = f"{meta['tracknumber']}/{nb_tracks}"
-        return meta
-
-    def _resolve_url(self, item: QueueItem) -> List[str]:
-        cached = self._yt_url_cache.get(item.query)
-        if cached:
-            logger.debug(f"[Cache] YouTube hit: '{item.query}'")
-            return cached
-        meta = item.meta or {}
-        urls = YouTubeSearcher.search(
-            item.query,
-            artist          = meta.get("artist", ""),
-            title           = meta.get("title", ""),
-            duration        = meta.get("duration", 0),
-            original_artist = meta.get("albumartist", ""),
-        )
-        if urls:
-            self._yt_url_cache[item.query] = urls
-        return urls
-
-    def _download_single(self, item: QueueItem, destination: str,
-                         progress_cb=None, genre_info: tuple = None,
-                         urls: List[str] = None) -> tuple:
-        dest     = item.destination or destination
-        meta     = self._prepare_meta(item, genre_info)
-        title    = meta.get("title") or item.label
-        artist   = meta.get("artist") or ""
-        raw_name = f"{artist} - {title}" if artist else title
-        filename = sanitize_filename(raw_name)
-
-        logger.info(f"[Download] Inizio: '{item.label}' → query='{item.query}'")
-
-        if Path(dest, f"{filename}.mp3").exists():
-            logger.info(f"[Download] Saltato (già esiste): {filename}.mp3")
-            return True, None
-
-        if urls is None:
-            urls = self._resolve_url(item)
-        if not urls:
-            logger.warning(f"[Download] Nessun URL trovato per: '{item.label}'")
-            return False, item.label
-
-        for i, url in enumerate(urls):
-            try:
-                logger.debug(f"[Download] Tentativo {i+1}/{len(urls)}: {url}")
-                filepath = AudioDownloader.download(url, dest, filename=filename,
-                                                    progress_callback=progress_cb)
-                tag_file(filepath, meta)
-                logger.info(f"[Download] Completato: {filepath}")
-                return True, None
-            except Exception as e:
-                logger.warning(f"[Download] URL {i+1} fallito per '{item.label}': {e}")
-                continue
-
-        logger.error(f"[Download] Tutti gli URL esauriti per: '{item.label}'")
-        return False, item.label
-
     def _run_download(self, queue: List[QueueItem], destination: str,
                       genre_info: tuple = None, artist_name: str = None,
                       clear_queue: bool = False):
-        total    = len(queue)
-        lock     = threading.Lock()
-        state    = {"successi": 0, "falliti": [], "completed": 0}
-        search_q: Queue = Queue()
-        download_q: Queue = Queue()
-
-        logger.info(f"[Batch] Inizio download: {total} tracce → {destination}")
-
-        def resolver():
-            seen: set = set()
-            for item in queue:
-                if genre_info is None:
-                    aid = item.meta.get("album_id", "")
-                    if aid and aid not in seen:
-                        seen.add(aid)
-                        self._get_genre(aid)
-            for item in queue:
-                if self._cancel_event.is_set():
-                    break
-                search_q.put(item)
-            for _ in range(SEARCH_WORKERS):
-                search_q.put(None)
-
-        def search_worker():
-            while True:
-                item = search_q.get()
-                if item is None:
-                    break
-                if self._cancel_event.is_set():
-                    download_q.put((item, []))
-                    continue
-                urls = self._resolve_url(item)
-                download_q.put((item, urls))
-
-        def download_worker():
-            while True:
-                entry = download_q.get()
-                if entry is None:
-                    break
-                item, urls = entry
-                item_id = id(item)
-
-                if self._cancel_event.is_set():
-                    with lock:
-                        state["completed"] += 1
-                        state["falliti"].append(f"{item.label} (annullato)")
-                        c = state["completed"]
-                    logger.info(f"[Download] Annullato: '{item.label}'")
-                    self.root.after(0, self._track_completed, item, item_id, False, c, total)
-                    continue
-
-                self.root.after(0, self._track_started, item, item_id)
-
-                def progress_cb(percent, _id=item_id):
-                    self.root.after(0, self._update_track_progress, _id, percent)
-
-                try:
-                    ok, err = self._download_single(item, destination, progress_cb, genre_info,
-                                                    urls=urls)
-                except Exception as e:
-                    logger.error(
-                        f"[Worker] Eccezione non gestita per '{item.label}': {e}", exc_info=True)
-                    ok, err = False, f"{item.label} ({str(e)[:40]})"
-
-                with lock:
-                    state["completed"] += 1
-                    if ok:
-                        state["successi"] += 1
-                    else:
-                        state["falliti"].append(err)
-                    c = state["completed"]
-
-                self.root.after(0, self._track_completed, item, item_id, ok, c, total)
-
-        resolver_t      = threading.Thread(target=resolver,         daemon=True)
-        search_threads  = [threading.Thread(target=search_worker,   daemon=True)
-                           for _ in range(SEARCH_WORKERS)]
-        download_threads = [threading.Thread(target=download_worker, daemon=True)
-                            for _ in range(MAX_WORKERS)]
-
-        resolver_t.start()
-        for t in search_threads + download_threads:
-            t.start()
-        resolver_t.join()
-        for t in search_threads:
-            t.join()
-        for _ in range(MAX_WORKERS):
-            download_q.put(None)
-        for t in download_threads:
-            t.join()
-
-        logger.info(
-            f"[Batch] Fine: {state['successi']}/{total} successi, "
-            f"{len(state['falliti'])} falliti"
+        """Thin wrapper UI: delega la pipeline a DownloadManager e marshalizza
+        i suoi hook di avanzamento sul thread principale via root.after."""
+        self.download_manager.run_batch(
+            queue, destination,
+            genre_info=genre_info, artist_name=artist_name,
+            on_track_started=lambda item, item_id:
+                self.root.after(0, self._track_started, item, item_id),
+            on_progress=lambda item_id, percent:
+                self.root.after(0, self._update_track_progress, item_id, percent),
+            on_track_completed=lambda item, item_id, ok, c, total:
+                self.root.after(0, self._track_completed, item, item_id, ok, c, total),
+            on_batch_done=lambda successi, falliti, q, dest, an:
+                self.root.after(0, self._download_all_done, successi, falliti, q, dest, an, clear_queue),
         )
-        self.root.after(0, self._download_all_done,
-                        state["successi"], state["falliti"],
-                        queue, destination, artist_name, clear_queue)
 
     def _download_all_done(self, successi: int, falliti: list, queue: List[QueueItem],
                            destination: str, artist_name: str, clear_queue: bool):
         self._restore_queue_panel()
         totale = len(queue)
-
-        if len(queue) == 1:
-            entry_type = "track"
-            nome    = queue[0].label
-            artista = queue[0].meta.get("artist", "") or artist_name or ""
-        else:
-            entry_type = "album"
-            nome    = queue[0].meta.get("album", "") or "Album"
-            artista = artist_name or queue[0].meta.get("albumartist", "")
-
-        self.cache.add_download({
-            "type":        entry_type,
-            "nome":        nome,
-            "artista":     artista,
-            "destination": destination,
-            "successi":    successi,
-            "totale":      totale,
-        })
         self._refresh_history_menu()
 
         if clear_queue:
@@ -1055,11 +865,10 @@ class MusicDownloaderApp:
                     album_id: int, album_name: str):
         self.current_artist = Artist(id=artist_id, nome=artist_name)
         try:
-            details = self.searcher.get_album_details(album_id)
+            details = self.search_controller.get_album_details(album_id)
             anno = details.get("anno", "")
-            aid  = str(album_id)
-            self._genre_cache[aid]     = details.get("genre", "")
-            self._nb_tracks_cache[aid] = details.get("nb_tracks", 0)
+            self.download_manager.prime_genre_cache(
+                str(album_id), details.get("genre", ""), details.get("nb_tracks", 0))
         except Exception:
             anno = ""
         self._show_tracks(Album(id=album_id, nome=album_name, anno=anno))
@@ -1074,7 +883,7 @@ class MusicDownloaderApp:
         queue: List[QueueItem] = []
         for album in albums:
             try:
-                tracks = self.searcher.get_album_tracks(album.id)
+                tracks = self.search_controller.get_album_tracks(album.id)
             except Exception as e:
                 messagebox.showerror("Errore", f"Impossibile caricare '{album.nome}': {e}")
                 return
@@ -1092,7 +901,7 @@ class MusicDownloaderApp:
             return
 
         artist_name = self.current_artist.nome if self.current_artist else ""
-        self._cancel_event.clear()
+        self.download_manager.cancel_event.clear()
         self._show_download_panel(queue)
         threading.Thread(
             target=self._run_download,
@@ -1106,7 +915,7 @@ class MusicDownloaderApp:
         if not destination:
             return
         try:
-            tracks = self.searcher.get_album_tracks(album.id)
+            tracks = self.search_controller.get_album_tracks(album.id)
         except Exception as e:
             messagebox.showerror("Errore", f"Impossibile caricare le tracce: {e}")
             return
@@ -1124,9 +933,9 @@ class MusicDownloaderApp:
         ]
 
         artist_name = self.current_artist.nome if self.current_artist else ""
-        genre_info  = self._get_genre(str(album.id))
+        genre_info  = self.download_manager.get_genre(str(album.id))
 
-        self._cancel_event.clear()
+        self.download_manager.cancel_event.clear()
         self._show_download_panel(queue)
         threading.Thread(
             target=self._run_download,
@@ -1134,13 +943,3 @@ class MusicDownloaderApp:
             kwargs={"genre_info": genre_info, "artist_name": artist_name, "clear_queue": False},
             daemon=True,
         ).start()
-
-
-def main():
-    root = ctk.CTk()
-    MusicDownloaderApp(root)
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    main()
