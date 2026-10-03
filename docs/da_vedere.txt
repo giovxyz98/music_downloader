@@ -81,4 +81,33 @@ aggiungere test unitari almeno per QueueManager (dedup, remove_indices)
 e DownloadManager (prepare_meta, _history_entry, gestione fallimenti in
 download_single) ora che è possibile farlo senza GUI.
 
+8. [APERTO] Quota Spotify "Development Mode" — blocco reale già preso
+
+Le credenziali attuali sono su una app Spotify in modalità Development
+(quota base, non richiesta l'Extended Quota Mode). Effetti concreti
+verificati con chiamate reali: limit cappato a 10 su ogni endpoint
+(paginazione automatica assorbe il problema su liste album/tracce, ma
+search_artist/search_track mostrano max 10 risultati in tendina invece
+di 50/100) e campi followers/genres/popularity/label assenti dalle
+risposte artista/album (non vuoti: assenti). Deciso 2026-09-20: genere
+lasciato vuoto, nessun fallback su Deezer, nessuna paginazione aggiunta
+alla ricerca testuale per ora.
+
+AGGIORNAMENTO stessa giornata: durante i test della sezione "Featuring"
+(#80/#81 in Modifiche effettuate.txt) l'app ha preso un vero blocco
+quota (HTTP 429 reason=QUOTA_EXCEEDED) sull'endpoint /artists/{id}/albums,
+Retry-After ~24h. Non è chiaro se scatti anche con un uso umano normale
+(un artista alla volta, senza script di test a raffica) o solo sotto
+carico da test automatizzati come quelli di oggi — non essendo
+documentata da Spotify, la soglia reale resta ignota. get_artist_features
+è stato riscritto a livello di canzone (non più album) e parallelizzato,
+ma non è stato possibile riverificarlo con dati reali dopo il blocco.
+
+DECISIONE DA PRENDERE nella prossima sessione: tenere Spotify (con
+eventuale throttling più aggressivo / cache persistente su disco tra
+sessioni per non ripartire da zero ogni avvio) oppure tornare a Deezer
+(searcher_deezer.py, mai stato soggetto a quota) come fonte principale,
+lasciando Spotify pronto ma non attivo. Richiede prima di tutto aspettare
+che la quota si liberi per poter testare dal vivo.
+
 FINE DOCUMENTO

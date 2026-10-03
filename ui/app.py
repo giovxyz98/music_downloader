@@ -53,6 +53,7 @@ class MusicDownloaderApp:
         self.current_artist:   Optional[Artist] = None
         self.current_albums:   List[Album] = []
         self.filtered_albums:  List[Album] = []
+        self.current_features: List[Track] = []
         self.current_tracks:   List[Track] = []
 
         self._dl_general_bar:   Optional[ctk.CTkProgressBar] = None
@@ -645,10 +646,86 @@ class MusicDownloaderApp:
         self._bind_album_context_menu()
         self._back_btn("← Nuova ricerca", self._show_search)
 
+        self._fetch_features()
+
     def _on_album_dclick(self, event):
         idx = self.albums_lb.nearest(event.y)
         if 0 <= idx < len(self.filtered_albums):
             self._show_tracks(self.filtered_albums[idx])
+
+    # ── Sezione: Featuring su album di altri artisti ────────────
+    # Separata dagli album propri: su backend che non la supportano
+    # (es. Deezer) get_artist_features torna [] e questa sezione resta
+    # semplicemente assente, senza errori.
+
+    def _fetch_features(self):
+        status = ctk.CTkLabel(self.nav_frame, text="Controllo featuring su altri album...",
+                              fg_color="transparent",
+                              text_color=SUBTEXT, font=("Segoe UI", 9))
+        status.pack(pady=(10, 0))
+
+        def _fetch():
+            try:
+                features = self.search_controller.get_artist_features(self.current_artist.id)
+            except Exception as e:
+                logger.warning(f"[UI] Errore recupero featuring: {e}")
+                features = []
+            self.root.after(0, lambda: self._finish_show_features(features, status))
+
+        self._ui_executor.submit(_fetch)
+
+    def _finish_show_features(self, features: List[Track], status_label):
+        status_label.destroy()
+        self.current_features = features
+        if not features:
+            return
+
+        ctk.CTkLabel(self.nav_frame,
+                     text=f"In featuring su {len(features)} canzoni con altri artisti  —  doppio click per aggiungere alla coda",
+                     fg_color="transparent",
+                     text_color=SUBTEXT, font=("Segoe UI", 9, "bold")).pack(pady=(10, 4))
+
+        list_frame = tk.Frame(self.nav_frame, bg=BG)
+        list_frame.pack(fill="both", expand=True)
+        sb = ttk.Scrollbar(list_frame)
+        sb.pack(side="right", fill="y")
+        self.features_lb = tk.Listbox(
+            list_frame, font=("Segoe UI", 11),
+            bg=PANEL, fg=TEXT, selectbackground=ACCENT, selectforeground=TEXT,
+            activestyle="none", bd=0, highlightthickness=0, yscrollcommand=sb.set,
+            selectmode=tk.EXTENDED
+        )
+        self.features_lb.pack(side="left", fill="both", expand=True)
+        sb.config(command=self.features_lb.yview)
+
+        for feat in self.current_features:
+            artisti = ", ".join(feat.artisti) if feat.artisti else "?"
+            self.features_lb.insert(tk.END, f"  {feat.nome}  ({feat.anno})  —  {artisti}  ·  {feat.album}")
+
+        self.features_lb.bind("<Double-Button-1>", self._on_feature_dclick)
+
+    def _on_feature_dclick(self, event):
+        idx = self.features_lb.nearest(event.y)
+        if 0 <= idx < len(self.current_features):
+            track = self.current_features[idx]
+            self._add_to_queue(
+                self._make_query(track),
+                f"{track.nome}  ({track.album})",
+                self._make_meta_from_feature(track),
+            )
+
+    def _make_meta_from_feature(self, track: Track) -> dict:
+        artist = ", ".join(track.artisti) if track.artisti else self.current_artist.nome
+        return {
+            "title":       track.nome,
+            "artist":      artist,
+            "albumartist": artist,
+            "album":       track.album,
+            "year":        track.anno,
+            "tracknumber": str(track.numero) if track.numero else "",
+            "album_id":    str(track.album_id) if track.album_id else "",
+            "duration":    track.duration,
+        }
 
     # ── Schermata: Tracce ────────────────────────────────────
 
@@ -744,10 +821,12 @@ class MusicDownloaderApp:
 
     def _make_meta(self, track: Track, album: Album) -> dict:
         artist = ", ".join(track.artisti) if track.artisti else self.current_artist.nome
+        albumartist = album.artisti[0] if album.artisti else (
+            self.current_artist.nome if self.current_artist else artist)
         return {
             "title":       track.nome,
             "artist":      artist,
-            "albumartist": self.current_artist.nome if self.current_artist else artist,
+            "albumartist": albumartist,
             "album":       album.nome,
             "year":        album.anno,
             "tracknumber": str(track.numero) if track.numero else "",

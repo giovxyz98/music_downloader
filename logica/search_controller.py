@@ -28,6 +28,9 @@ class SearchController:
     def get_artist_albums(self, artist_id: int) -> List[Album]:
         return self._searcher.get_artist_albums(artist_id)
 
+    def get_artist_features(self, artist_id: int) -> List[Track]:
+        return self._searcher.get_artist_features(artist_id)
+
     def get_album_tracks(self, album_id: int) -> List[Track]:
         return self._searcher.get_album_tracks(album_id)
 

@@ -13,6 +13,7 @@ from .config import (
     SCORE_DURATION_EXACT, SCORE_DURATION_CLOSE, SCORE_DURATION_FAR_PENALTY,
     SCORE_FUZZY_MULTIPLIER, SCORE_FIRST_RESULT_BONUS, SCORE_EXTRA_WORD_PENALTY,
     SCORE_ORIGINAL_ARTIST_MISSING_PENALTY, SCORE_MIN_DOWNLOAD,
+    SCORE_LIMIT_MARGIN, LIMIT_MAX_DURATION_DIFF,
     SCORE_VIEWS_GAP_RATIO, SCORE_VIEWS_GAP_PENALTY,
 )
 
@@ -152,11 +153,39 @@ class YouTubeSearcher:
         logger.debug(f"{p} punteggio base (prima del bonus primo risultato) = {score}")
         return score
 
+    @staticmethod
+    def _limit_case(entry: dict, score: int, art_n: str, tit_n: str, duration: int) -> str:
+        """Caso limite: punteggio poco sotto la soglia ma il video e' sul canale
+        dell'artista stesso. Ritorna "" se il candidato NON e' accettabile,
+        altrimenti la nota da mettere nel report. Tutte le condizioni devono
+        valere: meglio nessuna canzone che una sbagliata."""
+        if not art_n or score < SCORE_MIN_DOWNLOAD - SCORE_LIMIT_MARGIN:
+            return ""
+        v  = YouTubeSearcher._normalize(entry.get("title", ""))
+        ch = YouTubeSearcher._normalize(entry.get("uploader", "") or entry.get("channel", ""))
+        if art_n not in ch or art_n not in v or not tit_n or tit_n not in v:
+            return ""
+        if any(k in v for k in YouTubeSearcher._BAD_KEYWORDS):
+            return ""
+        dur = entry.get("duration") or 0
+        if dur and duration and abs(dur - duration) > LIMIT_MAX_DURATION_DIFF:
+            return ""
+        return (f"CASO LIMITE: punteggio {score} < {SCORE_MIN_DOWNLOAD}, accettato perche' sul canale "
+                f"dell'artista ('{entry.get('uploader') or entry.get('channel')}'), "
+                f"durata {dur or '?'}s (attesa {duration or '?'}s) - verifica che sia quello giusto")
+
     _SEP = "═" * 100
 
     @staticmethod
     def search(query: str, artist: str = "", title: str = "",
-               duration: int = 0, original_artist: str = "", tag: str = "") -> List[str]:
+               duration: int = 0, original_artist: str = "", tag: str = "",
+               diagnostics: dict = None) -> List[str]:
+        """Se `diagnostics` e' un dict, in caso di nessun URL vi scrive
+        ["reason"] con il motivo (e il miglior candidato scartato)."""
+        def why(msg: str) -> None:
+            if diagnostics is not None:
+                diagnostics["reason"] = msg
+
         logger.debug(YouTubeSearcher._SEP)
         logger.debug(
             f"[YouTube]{tag} INIZIO RICERCA query='{query}' "
@@ -175,11 +204,27 @@ class YouTubeSearcher:
                 results = ydl.extract_info(f"ytsearch{YOUTUBE_RESULTS}:{query}", download=False)
             raw_entries = results.get("entries") or []
             entries = [e for e in raw_entries if e]
+            if not entries and title and art_n and title != query:
+                # YouTube a volte da' 0 risultati se la query contiene il nome
+                # dell'artista (es. "Rocco Hunt Che me chiamme a fa") ma li da'
+                # con il solo titolo. Scatta SOLO con 0 risultati, e tiene solo
+                # i video che citano l'artista nel titolo o nel canale: senza
+                # l'artista non si scarica nulla.
+                logger.warning(f"[YouTube]{tag} 0 risultati per '{query}', riprovo col solo titolo '{title}' "
+                               f"(solo candidati con l'artista {art_n!r})")
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    results = ydl.extract_info(f"ytsearch{YOUTUBE_RESULTS}:{title}", download=False)
+                found = [e for e in (results.get("entries") or []) if e]
+                entries = [e for e in found if YouTubeSearcher._matches_artist(e, art_n)]
+                logger.debug(f"[YouTube]{tag} fallback solo-titolo: {len(found)} risultati, "
+                             f"{len(entries)} con l'artista")
+                raw_entries = entries
             if len(entries) != len(raw_entries):
                 logger.debug(f"[YouTube]{tag} {len(raw_entries) - len(entries)} entries vuote/None scartate da yt-dlp")
             logger.debug(f"[YouTube]{tag} yt-dlp ha restituito {len(entries)} risultati grezzi (richiesti {YOUTUBE_RESULTS})")
             if not entries:
                 logger.warning(f"[YouTube]{tag} Nessun risultato per: '{query}'")
+                why(f"YouTube non ha restituito nessun risultato per '{query}' (puo' essere temporaneo: riprova)")
                 return []
             max_same_artist_views = YouTubeSearcher._max_same_artist_views(entries, art_n)
             logger.debug(f"[YouTube]{tag} max views tra i candidati che citano l'artista {art_n!r}: {max_same_artist_views}")
@@ -194,9 +239,19 @@ class YouTubeSearcher:
             scored.sort(key=lambda x: x[0], reverse=True)
             best_score = scored[0][0]
             if best_score < SCORE_MIN_DOWNLOAD:
+                note = YouTubeSearcher._limit_case(scored[0][1], best_score, art_n, tit_n, duration)
+                if note:
+                    logger.warning(f"[YouTube]{tag} {note} → {scored[0][1].get('url')}")
+                    if diagnostics is not None:
+                        diagnostics["note"] = note
+                    return [scored[0][1]["url"]]
                 logger.warning(
                     f"[YouTube]{tag} Score troppo basso ({best_score}) per '{query}', download saltato"
                 )
+                top = scored[0][1]
+                why(f"punteggio troppo basso ({best_score} < {SCORE_MIN_DOWNLOAD}); miglior candidato scartato: "
+                    f"'{top.get('title', '?')}' [{top.get('uploader') or top.get('channel') or '?'}] "
+                    f"durata {top.get('duration') or '?'}s (attesa {duration or '?'}s) {top.get('url', '')}")
                 return []
             for rank, (s, e) in enumerate(scored, start=1):
                 views = e.get("view_count") or 0
@@ -211,4 +266,5 @@ class YouTubeSearcher:
             return urls
         except Exception as e:
             logger.error(f"[YouTube]{tag} Errore ricerca '{query}': {e}")
+            why(f"errore durante la ricerca YouTube: {e}")
         return []

@@ -157,6 +157,13 @@ class MusicSearcher:
         self._cache_set(self._track_cache, key, result)
         return result
 
+    def get_artist_features(self, artist_id: int) -> List[Track]:
+        """Deezer non offre un endpoint equivalente ad "appears_on" senza
+        scandire l'intero catalogo: nessun featuring, lista sempre vuota
+        (la sezione "Featuring" in UI resta semplicemente vuota)."""
+        logger.debug(f"[Deezer] get_artist_features({artist_id}) non supportato, ritorno lista vuota")
+        return []
+
     def get_album_details(self, album_id: int) -> Dict:
         data = self._get(f"{self.BASE}/album/{album_id}")
         genres = [g["name"] for g in data.get("genres", {}).get("data", [])]

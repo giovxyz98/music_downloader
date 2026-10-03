@@ -29,6 +29,7 @@ class Track:
     album: str = ""
     album_id: Optional[int] = None
     artist_id: Optional[int] = None
+    anno: str = ""
 
 
 @dataclass
@@ -37,3 +38,7 @@ class QueueItem:
     label: str
     meta: dict = field(default_factory=dict)
     destination: str = ""
+    result_url: str = ""      # URL YouTube da cui e' stato scaricato (compilato da download_single)
+    result_status: str = ""   # "ok" | "esistente" | "errore" | "nessun url" | "annullato"
+    result_note: str = ""     # avvisi su un download riuscito (es. caso limite)
+    result_error: str = ""    # motivo del fallimento (ultima eccezione per URL)

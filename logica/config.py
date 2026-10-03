@@ -52,6 +52,8 @@ _CFG_DEFAULTS: dict = {
     "RECENT_SEARCHES_SHOWN":      10,
     "DEEZER_ARTIST_LIMIT":        100,
     "DEEZER_TRACK_LIMIT":         50,
+    "SPOTIFY_ARTIST_LIMIT":       10,
+    "SPOTIFY_TRACK_LIMIT":        10,
     "CACHE_MAXSIZE":              200,
     "DOWNLOAD_TIMEOUT":           300,
     # Pesi scoring YouTube — configurabili senza toccare il codice
@@ -69,6 +71,12 @@ _CFG_DEFAULTS: dict = {
     "SCORE_EXTRA_WORD_PENALTY":              10,
     "SCORE_ORIGINAL_ARTIST_MISSING_PENALTY": 35,
     "SCORE_MIN_DOWNLOAD":                    50,
+    # Caso limite: sotto SCORE_MIN_DOWNLOAD ma non oltre LIMIT_MARGIN punti, si
+    # accetta il miglior candidato solo se e' sul canale dell'artista stesso
+    # (vedi YouTubeSearcher._limit_case) e la durata non si discosta oltre
+    # LIMIT_MAX_DURATION_DIFF secondi.
+    "SCORE_LIMIT_MARGIN":                    10,
+    "LIMIT_MAX_DURATION_DIFF":               90,
     "SEARCH_WORKERS":             2,
     # Penalità "canale sospetto": se un candidato ha views drasticamente più
     # basse di un altro candidato che cita lo stesso artista nella stessa
@@ -103,6 +111,8 @@ HISTORY_MENU_MAX           = _cfg["HISTORY_MENU_MAX"]
 RECENT_SEARCHES_SHOWN      = _cfg["RECENT_SEARCHES_SHOWN"]
 DEEZER_ARTIST_LIMIT        = _cfg["DEEZER_ARTIST_LIMIT"]
 DEEZER_TRACK_LIMIT         = _cfg["DEEZER_TRACK_LIMIT"]
+SPOTIFY_ARTIST_LIMIT       = _cfg["SPOTIFY_ARTIST_LIMIT"]
+SPOTIFY_TRACK_LIMIT        = _cfg["SPOTIFY_TRACK_LIMIT"]
 CACHE_MAXSIZE              = _cfg["CACHE_MAXSIZE"]
 DOWNLOAD_TIMEOUT           = _cfg["DOWNLOAD_TIMEOUT"]
 SCORE_ARTIST_IN_TITLE      = _cfg["SCORE_ARTIST_IN_TITLE"]
@@ -119,6 +129,8 @@ SCORE_FIRST_RESULT_BONUS              = _cfg["SCORE_FIRST_RESULT_BONUS"]
 SCORE_EXTRA_WORD_PENALTY              = _cfg["SCORE_EXTRA_WORD_PENALTY"]
 SCORE_ORIGINAL_ARTIST_MISSING_PENALTY = _cfg["SCORE_ORIGINAL_ARTIST_MISSING_PENALTY"]
 SCORE_MIN_DOWNLOAD                    = _cfg["SCORE_MIN_DOWNLOAD"]
+SCORE_LIMIT_MARGIN                    = _cfg["SCORE_LIMIT_MARGIN"]
+LIMIT_MAX_DURATION_DIFF               = _cfg["LIMIT_MAX_DURATION_DIFF"]
 SEARCH_WORKERS             = _cfg["SEARCH_WORKERS"]
 SCORE_VIEWS_GAP_RATIO      = _cfg["SCORE_VIEWS_GAP_RATIO"]
 SCORE_VIEWS_GAP_PENALTY    = _cfg["SCORE_VIEWS_GAP_PENALTY"]

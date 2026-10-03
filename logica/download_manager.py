@@ -43,7 +43,7 @@ class DownloadManager:
             logger.debug(f"[Genre] cache hit per album_id={album_id}: genre={self._genre_cache[album_id]!r}")
             return self._genre_cache[album_id], self._nb_tracks_cache.get(album_id, 0)
         try:
-            details   = self._searcher.get_album_details(int(album_id))
+            details   = self._searcher.get_album_details(album_id)
             genre     = details.get("genre", "")
             nb_tracks = details.get("nb_tracks", 0)
             logger.debug(f"[Genre] cache miss per album_id={album_id}, richiesto a Deezer: genre={genre!r} nb_tracks={nb_tracks}")
@@ -68,6 +68,7 @@ class DownloadManager:
             logger.debug(f"[Cache]{tag} YouTube hit: '{item.query}' → {cached[0]}")
             return cached
         meta = item.meta or {}
+        diag: dict = {}
         urls = YouTubeSearcher.search(
             item.query,
             artist          = meta.get("artist", ""),
@@ -75,9 +76,13 @@ class DownloadManager:
             duration        = meta.get("duration", 0),
             original_artist = meta.get("albumartist", ""),
             tag             = tag,
+            diagnostics     = diag,
         )
+        item.result_note = diag.get("note", "")
         if urls:
             self._yt_url_cache[item.query] = urls
+        else:
+            item.result_error = diag.get("reason", "")
         return urls
 
     def prepare_meta(self, item: QueueItem, genre_info: tuple = None) -> dict:
@@ -112,6 +117,7 @@ class DownloadManager:
         if Path(dest, f"{filename}.mp3").exists():
             logger.info(f"[Download]{tag} Saltato (già esiste): {filename}.mp3")
             logger.info(f"{'─' * 90}")
+            item.result_status = "esistente"
             return True, None
 
         if urls is None:
@@ -119,9 +125,12 @@ class DownloadManager:
         if not urls:
             logger.warning(f"[Download]{tag} Nessun URL trovato per: '{item.label}'")
             logger.info(f"{'─' * 90}")
+            item.result_status = "nessun url"
+            item.result_error = item.result_error or f"nessun risultato YouTube valido per '{item.query}'"
             return False, item.label
 
         logger.debug(f"[Download]{tag} {len(urls)} URL candidati in ordine di score: {urls}")
+        errors: List[str] = []
         for i, url in enumerate(urls):
             try:
                 logger.debug(f"[Download]{tag} Tentativo {i+1}/{len(urls)}: {url}")
@@ -129,15 +138,19 @@ class DownloadManager:
                                                     progress_callback=progress_cb, tag=tag)
                 logger.debug(f"[Download]{tag} File scaricato: {filepath}, applico i tag ID3")
                 tag_file(filepath, meta, tag=tag)
-                logger.info(f"[Download]{tag} Completato: {filepath}")
+                logger.info(f"[Download]{tag} Completato: {filepath} ← {url}")
                 logger.info(f"{'─' * 90}")
+                item.result_url, item.result_status = url, "ok"
                 return True, None
             except Exception as e:
                 logger.warning(f"[Download]{tag} URL {i+1} fallito per '{item.label}': {e}")
+                errors.append(f"{url} → {str(e).strip()[:200]}")
                 continue
 
         logger.error(f"[Download]{tag} Tutti gli URL esauriti per: '{item.label}'")
         logger.info(f"{'─' * 90}")
+        item.result_url, item.result_status = urls[0], "errore"
+        item.result_error = " || ".join(errors)
         return False, item.label
 
     # ── Batch (coda intera) ──────────────────────────────────────
@@ -227,6 +240,7 @@ class DownloadManager:
                         state["falliti"].append(f"{item.label} (annullato)")
                         c = state["completed"]
                     logger.info(f"[Download]{item_tag} Annullato: '{item.label}'")
+                    item.result_status = "annullato"
                     if on_track_completed:
                         on_track_completed(item, item_id, False, c, total)
                     continue
@@ -245,6 +259,7 @@ class DownloadManager:
                     logger.error(
                         f"[Worker]{item_tag} Eccezione non gestita per '{item.label}': {e}", exc_info=True)
                     ok, err = False, f"{item.label} ({str(e)[:40]})"
+                    item.result_status, item.result_error = "errore", f"eccezione: {e}"
 
                 with lock:
                     state["completed"] += 1

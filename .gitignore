@@ -13,6 +13,8 @@
 !README.md
 !music_downloader.py
 !test_pipeline.py
+!scarica_da_txt.py
+!scarica_da_txt.bat
 !start.bat
 !config.json
 !requirements.txt
