@@ -6,12 +6,29 @@ from typing import Optional
 import yt_dlp
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
+from mutagen.mp3 import MP3
 
 from .config import (
-    logger, YtDlpLogAdapter,
+    logger, YtDlpLogAdapter, FFMPEG_DIR,
     PREFERRED_QUALITY, SOCKET_TIMEOUT, RETRIES, DOWNLOAD_TIMEOUT,
 )
 from .text_utils import sanitize_filename
+
+
+def check_mp3(filepath: str) -> str:
+    """Controllo veloce (solo header, nessuna decodifica). Ritorna '' se il file
+    sembra valido, altrimenti il motivo. Non vede buchi o glitch nel mezzo."""
+    try:
+        size = Path(filepath).stat().st_size
+        info = MP3(filepath).info
+    except Exception as e:
+        return f"illeggibile: {e}"
+    if info.length < 10:
+        return f"durata troppo breve ({info.length:.0f}s)"
+    expected = info.bitrate / 8 * info.length
+    if size < 0.9 * expected:
+        return f"troncato ({size} byte su ~{expected:.0f})"
+    return ""
 
 
 def tag_file(filepath: str, meta: dict, tag: str = "") -> None:
@@ -91,6 +108,8 @@ class AudioDownloader:
             "retries":                       RETRIES,
             "concurrent_fragment_downloads": 3,
         }
+        if FFMPEG_DIR:
+            opts["ffmpeg_location"] = FFMPEG_DIR
         logger.debug(f"[yt-dlp]{tag} avvio download url={url!r} outtmpl={outtmpl!r} opts={ {k: v for k, v in opts.items() if k != 'progress_hooks'} }")
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])

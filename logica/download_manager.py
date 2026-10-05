@@ -5,7 +5,7 @@ from typing import Callable, List, Optional
 
 from .cache import CacheManager
 from .config import logger
-from .downloader import AudioDownloader, tag_file
+from .downloader import AudioDownloader, tag_file, check_mp3
 from .text_utils import sanitize_filename
 from .models import QueueItem
 from .searcher import MusicSearcher
@@ -100,6 +100,24 @@ class DownloadManager:
 
     # ── Download singola traccia ────────────────────────────────
 
+    @staticmethod
+    def _filename(item: QueueItem, meta: dict) -> str:
+        title    = meta.get("title") or item.label
+        artist   = meta.get("artist") or ""
+        raw_name = f"{artist} - {title}" if artist else title
+        return sanitize_filename(raw_name)
+
+    @staticmethod
+    def _check_label(filepath) -> str:
+        problem = check_mp3(str(filepath))
+        return f"SOSPETTO: {problem}" if problem else "valido"
+
+    def already_downloaded(self, item: QueueItem, destination: str) -> bool:
+        """True se il file di destinazione esiste gia' (titolo e artista non
+        dipendono dal genere, quindi bastano i metadati grezzi)."""
+        dest = item.destination or destination
+        return Path(dest, f"{self._filename(item, item.meta or {})}.mp3").exists()
+
     def download_single(self, item: QueueItem, destination: str,
                         progress_cb=None, genre_info: tuple = None,
                         urls: List[str] = None, tag: str = "") -> tuple:
@@ -107,8 +125,7 @@ class DownloadManager:
         meta     = self.prepare_meta(item, genre_info)
         title    = meta.get("title") or item.label
         artist   = meta.get("artist") or ""
-        raw_name = f"{artist} - {title}" if artist else title
-        filename = sanitize_filename(raw_name)
+        filename = self._filename(item, meta)
 
         logger.info(f"{'─' * 90}")
         logger.info(f"[Download]{tag} Inizio: '{item.label}' → query='{item.query}' "
@@ -118,6 +135,7 @@ class DownloadManager:
             logger.info(f"[Download]{tag} Saltato (già esiste): {filename}.mp3")
             logger.info(f"{'─' * 90}")
             item.result_status = "esistente"
+            item.result_check = self._check_label(Path(dest, f"{filename}.mp3"))
             return True, None
 
         if urls is None:
@@ -141,6 +159,7 @@ class DownloadManager:
                 logger.info(f"[Download]{tag} Completato: {filepath} ← {url}")
                 logger.info(f"{'─' * 90}")
                 item.result_url, item.result_status = url, "ok"
+                item.result_check = self._check_label(filepath)
                 return True, None
             except Exception as e:
                 logger.warning(f"[Download]{tag} URL {i+1} fallito per '{item.label}': {e}")
@@ -223,7 +242,10 @@ class DownloadManager:
                 if self.cancel_event.is_set():
                     download_q.put((item, [], item_tag))
                     continue
-                urls = self.resolve_url(item, tag=item_tag)
+                # File gia' presente: niente ricerca su YouTube, download_single
+                # lo segnalera' come "esistente" prima di toccare gli URL.
+                urls = [] if self.already_downloaded(item, destination) \
+                       else self.resolve_url(item, tag=item_tag)
                 download_q.put((item, urls, item_tag))
 
         def download_worker():

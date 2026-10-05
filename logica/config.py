@@ -1,10 +1,24 @@
 import json
 import logging
+import os
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 # Radice del progetto: logica/config.py -> logica/ -> root
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+# Dove vivono log, cache e config: da sorgente accanto al codice; da exe
+# (PyInstaller) in %APPDATA%, perche' la cartella dell'exe one-file e'
+# temporanea e a ogni chiusura verrebbe cancellata.
+if getattr(sys, "frozen", False):
+    DATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "MusicDownloader"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    DATA_DIR = ROOT_DIR
+
+# ffmpeg/ffprobe inclusi nel bundle exe (vedi build_exe.bat); da sorgente si usa il PATH.
+FFMPEG_DIR = str(Path(sys._MEIPASS) / "ffmpeg") if getattr(sys, "frozen", False) else None
 
 # ─────────────────────────────────────────────────────────────
 # Palette
@@ -26,15 +40,16 @@ BORDER  = "#4b5563"
 logger = logging.getLogger("music_downloader")
 if not logger.handlers:
     logger.setLevel(logging.DEBUG)
-    _log_file = ROOT_DIR / "music_downloader.log"
-    _fh = RotatingFileHandler(_log_file, maxBytes=20_000_000, backupCount=5, encoding="utf-8")
-    _fh.setLevel(logging.DEBUG)
+    _log_file = DATA_DIR / "music_downloader.log"
+    _fh = RotatingFileHandler(_log_file, maxBytes=5_000_000, backupCount=2, encoding="utf-8")
+    _fh.setLevel(logging.DEBUG)  # abbassato dopo il load di config.json (LOG_LEVEL)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    _ch = logging.StreamHandler()
-    _ch.setLevel(logging.WARNING)
-    _ch.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
     logger.addHandler(_fh)
-    logger.addHandler(_ch)
+    if sys.stderr is not None:  # exe senza console: stderr e' None
+        _ch = logging.StreamHandler()
+        _ch.setLevel(logging.WARNING)
+        _ch.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+        logger.addHandler(_ch)
 
 # ─────────────────────────────────────────────────────────────
 # Configurazione  (default + override da config.json)
@@ -56,6 +71,8 @@ _CFG_DEFAULTS: dict = {
     "SPOTIFY_TRACK_LIMIT":        10,
     "CACHE_MAXSIZE":              200,
     "DOWNLOAD_TIMEOUT":           300,
+    # Livello del log su file: INFO per l'uso normale, DEBUG per diagnosticare lo scoring
+    "LOG_LEVEL":                  "INFO",
     # Pesi scoring YouTube — configurabili senza toccare il codice
     "SCORE_ARTIST_IN_TITLE":      25,
     "SCORE_TITLE_IN_TITLE":       30,
@@ -85,7 +102,7 @@ _CFG_DEFAULTS: dict = {
     "SCORE_VIEWS_GAP_PENALTY":    50,
 }
 
-_cfg_file = ROOT_DIR / "config.json"
+_cfg_file = DATA_DIR / "config.json"
 try:
     with open(_cfg_file, "r", encoding="utf-8") as _f:
         _cfg = {**_CFG_DEFAULTS, **json.load(_f)}
@@ -98,6 +115,11 @@ except Exception as _e:
     _cfg = dict(_CFG_DEFAULTS)
     with open(_cfg_file, "w", encoding="utf-8") as _f:
         json.dump(_CFG_DEFAULTS, _f, indent=2)
+
+_log_level = getattr(logging, str(_cfg["LOG_LEVEL"]).upper(), logging.INFO)
+for _h in logger.handlers:
+    if isinstance(_h, RotatingFileHandler):
+        _h.setLevel(_log_level)
 
 MAX_WORKERS                = _cfg["MAX_WORKERS"]
 PREFERRED_QUALITY          = _cfg["PREFERRED_QUALITY"]

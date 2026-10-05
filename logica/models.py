@@ -42,3 +42,4 @@ class QueueItem:
     result_status: str = ""   # "ok" | "esistente" | "errore" | "nessun url" | "annullato"
     result_note: str = ""     # avvisi su un download riuscito (es. caso limite)
     result_error: str = ""    # motivo del fallimento (ultima eccezione per URL)
+    result_check: str = ""    # "valido" | "SOSPETTO: motivo" (controllo header mp3)
