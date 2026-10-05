@@ -1,5 +1,5 @@
 import time
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from .models import QueueItem
 
@@ -40,16 +40,23 @@ class ProgressTracker:
 
     L'ETA e' reale: misura quanto lavoro (canzoni scaricate davvero, in frazioni)
     e' stato fatto dal via e ne ricava la velocita' effettiva, parallelismo
-    incluso. Le canzoni gia' presenti o fallite subito non contano come lavoro,
-    e la loro quota osservata finora viene applicata a quelle ancora da fare."""
+    incluso. Le canzoni gia' presenti su disco (note in anticipo, `existing_ids`)
+    sono escluse da ETA e spazio stimato. Quelle che falliscono subito non contano
+    come lavoro, e la loro quota osservata finora viene applicata a quelle ancora
+    da fare."""
 
     MIN_WORK = 0.5       # canzoni-equivalenti scaricate prima di fidarsi dell'ETA
     MIN_ELAPSED = 5.0    # secondi
     MIN_SAMPLE = 5       # canzoni concluse prima di stimare quante saranno saltate
 
-    def __init__(self, queue: List[QueueItem], bitrate_kbps: int):
+    def __init__(self, queue: List[QueueItem], bitrate_kbps: int,
+                 existing_ids: Iterable[int] = ()):
         self.total = len(queue)
-        self.estimated_bytes = estimate_total_bytes(queue, bitrate_kbps)
+        self._existing = set(existing_ids)      # id() delle canzoni gia' scaricate prima
+        self.existing_count = len(self._existing)
+        self.estimated_bytes = estimate_total_bytes(
+            [i for i in queue if id(i) not in self._existing], bitrate_kbps)
+        self._existing_done = 0   # di quelle gia' presenti, quante sono state saltate
         self.downloaded_bytes = 0
         self._partial: Dict[int, float] = {}
         self._finished = 0        # tutte le canzoni concluse, comunque
@@ -65,6 +72,9 @@ class ProgressTracker:
     def complete(self, item_id: int, item: QueueItem, size_bytes: int = 0) -> None:
         self._partial.pop(item_id, None)
         self._finished += 1
+        if item_id in self._existing:
+            self._existing.discard(item_id)
+            self._existing_done += 1
         if item.result_status == "ok":
             self._work_done += 1
             self.downloaded_bytes += size_bytes
@@ -89,8 +99,9 @@ class ProgressTracker:
             return None
         # Quante delle canzoni non ancora iniziate saranno download veri (le altre
         # sono gia' presenti o falliscono subito): la quota osservata finora.
-        real_share = self._work_done / self._finished if self._finished >= self.MIN_SAMPLE else 1.0
+        considered = self._finished - self._existing_done
+        real_share = self._work_done / considered if considered >= self.MIN_SAMPLE else 1.0
         in_progress = sum(1 - p for p in self._partial.values())
-        unstarted = self.total - self._finished - len(self._partial)
+        unstarted = self.total - self._finished - len(self._partial) - len(self._existing)
         to_do = in_progress + max(unstarted, 0) * real_share
         return to_do * elapsed / work

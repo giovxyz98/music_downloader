@@ -99,10 +99,14 @@ class TxtDownloaderApp:
             else:
                 n = count_tracks(self.plans)
                 if n:
-                    size = estimate_total_bytes([i for p in self.plans for i in p.queue],
-                                                int(PREFERRED_QUALITY))
-                    summary = (f"Saranno scaricate {n} {'canzone' if n == 1 else 'canzoni'}"
-                               f"  —  spazio stimato ~{format_bytes(size)}")
+                    queue = [i for p in self.plans for i in p.queue]
+                    new_items = [i for i in queue if not item_file_size(i)]
+                    present = n - len(new_items)
+                    size = estimate_total_bytes(new_items, int(PREFERRED_QUALITY))
+                    summary = f"{n} {'canzone' if n == 1 else 'canzoni'} nel file"
+                    if present:
+                        summary += f", {present} già presenti (saltate)"
+                    summary += f"  —  da scaricare {len(new_items)}, spazio stimato ~{format_bytes(size)}"
                     if n_ign:
                         summary += f"  —  ATTENZIONE: {n_ign} righe del txt ignorate (vedi log)"
                     text = format_tree(self.plans, self.destination)
@@ -125,7 +129,8 @@ class TxtDownloaderApp:
         queue = [item for p in plans for item in p.queue]
         self._build_progress(queue)
         self._ok = 0
-        self.tracker = ProgressTracker(queue, int(PREFERRED_QUALITY))
+        existing = {id(i) for i in queue if item_file_size(i)}
+        self.tracker = ProgressTracker(queue, int(PREFERRED_QUALITY), existing)
         self.tracker.start()
         self._running = True
         self._last_log = 0.0

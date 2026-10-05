@@ -1,10 +1,11 @@
 ALGORITMO DI SCORING YOUTUBE
 Progetto: Music Downloader
+(riscritto il 2026-10-05 sul codice attuale di logica/youtube.py)
 ════════════════════════════════════════════════════════════════
 
 Quando l'app cerca una canzone su YouTube, non prende il primo risultato
-in assoluto: assegna un punteggio a ogni risultato e sceglie quello con
-il punteggio più alto.
+in assoluto: assegna un punteggio a ciascuno dei primi YOUTUBE_RESULTS (5)
+risultati e sceglie quello con il punteggio più alto.
 
 Il punteggio parte da 0 e viene modificato da bonus e penalità.
 
@@ -14,17 +15,19 @@ INPUT
 ────────────────────────────────────────────────────────────────
 
 Per ogni ricerca vengono passati:
-  - query    : stringa usata per cercare su YouTube
-                 es. "Gianni Celeste - Te penzo"
-  - artist   : nome artista da Deezer
-                 es. "Gianni Celeste"
-  - title    : titolo traccia da Deezer
-                 es. "Te penzo"
-  - duration : durata in secondi da Deezer
-                 es. 187
+  - query           : stringa usata per cercare su YouTube
+                        es. "Gianni Celeste - Te penzo"
+  - artist          : artista della traccia (primo artista)
+  - title           : titolo traccia (da Deezer, oppure scritto nel txt)
+  - duration        : durata attesa in secondi (può mancare: nel txt è facoltativa)
+  - original_artist : album artist cercato (può differire da artist nelle tracce con feat.)
 
 Prima di qualsiasi confronto, artista e titolo vengono normalizzati:
-accenti rimossi, tutto minuscolo, punteggiatura eliminata.
+accenti rimossi, tutto minuscolo, punteggiatura eliminata (l'apostrofo diventa
+uno spazio: "m'appicceche" → "m appicceche").
+
+Se YouTube restituisce 0 risultati per la query completa, si riprova col solo
+titolo e si tengono solo i video che citano l'artista nel titolo o nel canale.
 
 
 ────────────────────────────────────────────────────────────────
@@ -34,14 +37,16 @@ BONUS
   +25   Nome artista presente nel titolo YouTube
   +30   Titolo canzone presente nel titolo YouTube
   +15   Nome artista presente nel nome canale
+          (nota: "giannivezzositv" NON contiene "gianni vezzosi" con lo spazio)
   +25   Il canale contiene "topic"
-          (canali auto-generati da YouTube per artisti verificati)
+          (canali auto-generati da YouTube; NON verifica di chi sia il canale,
+           vedi "Limiti noti" in fondo)
   +10   Il titolo YouTube contiene "official video" o "official audio"
   +20   È il primo risultato restituito da YouTube per quella query
-  +20   Durata entro 5 secondi dalla durata Deezer
-  +10   Durata entro 15 secondi dalla durata Deezer
+  +20   Durata entro 5 secondi dalla durata attesa
+  +10   Durata entro 15 secondi dalla durata attesa
   +30   Fuzzy match tra titolo atteso e titolo YouTube (max)
-          (usa token_sort_ratio: ordina le parole prima di confrontare,
+          (token_sort_ratio × 0.3: ordina le parole prima di confrontare,
            meno ingannato da parole aggiuntive nel titolo YouTube)
 
 
@@ -50,11 +55,32 @@ PENALITÀ
 ────────────────────────────────────────────────────────────────
 
   -25   Per ogni parola indesiderata trovata nel titolo YouTube:
-          live, karaoke, remix, cover, instrumental,
+          live, karaoke, instrumental, remix, cover,
           sped up, slowed, 8d, nightcore
-  -20   Durata oltre 60 secondi di differenza dalla durata Deezer
+          ECCEZIONE (2026-10-05): se la parola è già nel titolo RICHIESTO
+          (es. "Mio caro - Live") non si penalizza: l'hai chiesta tu.
+  -20   Durata oltre 60 secondi di differenza dalla durata attesa
   -10   Per ogni parola "extra" nel titolo YouTube non spiegabile
           da artista, titolo o rumore comune (vedi sotto)
+  -35   Artista originale (album artist) assente da titolo e canale, quando
+          è diverso dall'artista della traccia
+  -50   Views ≥ 20 volte più basse del massimo tra i candidati "stesso artista
+          e stessa canzone" della stessa ricerca (segnale di canale
+          omonimo/impostore, vedi sotto)
+
+
+PENALITÀ VIEWS (canale sospetto)
+────────────────────────────────
+Serve per il caso "Cu te 'mparaviso" (problemi_scoring.txt #5): un canale
+omonimo con 680 views batteva il canale ufficiale con 55.000.
+
+Il riferimento è il MASSIMO delle views tra i candidati che citano l'artista
+(titolo o canale) E contengono il titolo cercato. Fino al 2026-10-04 il
+riferimento era ristretto solo all'artista: un hit di un'ALTRA canzone dello
+stesso artista (es. 3,5 milioni di views) penalizzava di -50 qualunque upload
+giusto ma meno visto — causa principale dei falsi scarti nel download da txt
+(es. "Amo lei" 83 → 33). Se nessun candidato contiene il titolo, la penalità
+non scatta.
 
 
 COME SI CALCOLANO LE PAROLE EXTRA
@@ -69,7 +95,8 @@ Dal titolo YouTube normalizzato vengono tolte:
   4. Tutte le parole del nome artista
   5. Parole di un solo carattere
 
-Quello che rimane sono parole "sospette" — ogni parola costa -10.
+Quello che rimane sono parole "sospette" — ogni parola costa -10. Gli altri
+artisti di un feat. (es. "Max Scaletta" in "Amo solo lei") contano come extra.
 
 Esempio 1 (nessuna penalità):
   Titolo YouTube : "Massimo & Gianni Celeste - Vite Perdute - Official Seamusica"
@@ -83,54 +110,107 @@ Esempio 2 (penalità -10):
 
 
 ────────────────────────────────────────────────────────────────
-SOGLIA MINIMA
+SOGLIA MINIMA E CASO LIMITE
 ────────────────────────────────────────────────────────────────
 
-Se il punteggio del miglior risultato è inferiore a 20,
-il download viene saltato completamente.
-Nel log appare un WARNING:
+Se il punteggio del miglior risultato è inferiore a SCORE_MIN_DOWNLOAD (50),
+il download viene saltato. Nel log appare un WARNING:
 
   [YouTube] Score troppo basso (X) per 'titolo', download saltato
+
+e nel report_download.txt dell'artista il motivo, con il miglior candidato
+scartato (titolo, canale, durata).
+
+CASO LIMITE: se il punteggio è sotto la soglia ma non oltre SCORE_LIMIT_MARGIN
+(10) punti, il candidato viene comunque accettato quando TUTTE queste condizioni
+valgono: artista nel canale e nel titolo, titolo cercato nel titolo, nessuna
+parola indesiderata (escluse quelle già nel titolo richiesto), durata entro
+LIMIT_MAX_DURATION_DIFF (90) secondi. Il report segnala "CASO LIMITE".
+
+
+────────────────────────────────────────────────────────────────
+AVVISI NEL REPORT (non cambiano cosa si scarica)
+────────────────────────────────────────────────────────────────
+
+Dopo la scelta, se il candidato vincente ha una durata distante oltre
+SUSPECT_DURATION_DIFF (30) secondi da quella attesa, oppure l'artista non
+compare né nel titolo né nel canale, la voce del report riceve:
+
+  !!! ATTENZIONE: durata video Xs, attesa Ys; l'artista '...' non compare ... - verifica che sia la versione giusta
+
+Un blocco rigido per durata (>90s) è stato provato e scartato: rifiutava canzoni
+giuste, perché le versioni su Spotify/Deezer spesso sono rifatte o live e più
+corte dell'originale su YouTube. Meglio scaricare e segnalare.
 
 
 ────────────────────────────────────────────────────────────────
 COME LEGGERE UNA RIGA DI LOG
 ────────────────────────────────────────────────────────────────
 
-Esempio:
-  [YouTube] Score=125  cercato='Te penzo'  views= 1,234,567
+Esempio (richiede LOG_LEVEL = "DEBUG" in config.json):
+  [YouTube] CLASSIFICA #1  Score=125  cercato='Te penzo'  views= 1,234,567
             canale='Gianni Celeste – Topic'
             titolo='Gianni Celeste - Te penzo (Official Audio)'
 
   Score    : punteggio finale calcolato
-  cercato  : titolo che si stava cercando (da Deezer)
-  views    : visualizzazioni del video (informativo, non influenza lo score)
+  cercato  : titolo che si stava cercando
+  views    : visualizzazioni del video (influisce solo tramite la penalità views)
   canale   : nome del canale YouTube
   titolo   : titolo del video YouTube
 
 Vengono mostrate tutte le righe (tutti i candidati), ordinate per score
-decrescente. Il primo è quello che verrà scaricato.
+decrescente. Il primo è quello che verrà scaricato; gli altri sono i ripieghi
+se il download del primo fallisce. Con LOG_LEVEL "DEBUG" ogni componente del
+punteggio di ogni candidato è loggato riga per riga ([Score] cand#N ...).
+
+A livello INFO (default) restano i WARNING di scarto, gli avvisi ATTENZIONE e,
+per il download da txt, una riga "[Progress] n/tot concluse | ETA | MB" ogni
+30 secondi.
 
 
 ────────────────────────────────────────────────────────────────
 CONFIGURAZIONE
 ────────────────────────────────────────────────────────────────
 
-Tutti i valori numerici si trovano in config.json con prefisso SCORE_*
-e possono essere modificati senza toccare il codice.
+I valori numerici hanno un default in logica/config.py e possono essere
+sovrascritti in config.json (prefisso SCORE_*), senza toccare il codice.
+Valori attuali:
 
-  SCORE_ARTIST_IN_TITLE      = 25
-  SCORE_TITLE_IN_TITLE       = 30
-  SCORE_ARTIST_IN_CHANNEL    = 15
-  SCORE_TOPIC_CHANNEL        = 25
-  SCORE_OFFICIAL_KEYWORD     = 10
-  SCORE_BAD_KEYWORD_PENALTY  = 25
-  SCORE_DURATION_EXACT       = 20
-  SCORE_DURATION_CLOSE       = 10
-  SCORE_DURATION_FAR_PENALTY = 20
-  SCORE_FUZZY_MULTIPLIER     = 0.3
-  SCORE_FIRST_RESULT_BONUS   = 20
-  SCORE_EXTRA_WORD_PENALTY   = 10
-  SCORE_MIN_DOWNLOAD         = 20
+  SCORE_ARTIST_IN_TITLE                = 25
+  SCORE_TITLE_IN_TITLE                 = 30
+  SCORE_ARTIST_IN_CHANNEL              = 15
+  SCORE_TOPIC_CHANNEL                  = 25
+  SCORE_OFFICIAL_KEYWORD               = 10
+  SCORE_BAD_KEYWORD_PENALTY            = 25
+  SCORE_DURATION_EXACT                 = 20
+  SCORE_DURATION_CLOSE                 = 10
+  SCORE_DURATION_FAR_PENALTY           = 20
+  SCORE_FUZZY_MULTIPLIER               = 0.3
+  SCORE_FIRST_RESULT_BONUS             = 20
+  SCORE_EXTRA_WORD_PENALTY             = 10
+  SCORE_ORIGINAL_ARTIST_MISSING_PENALTY = 35
+  SCORE_VIEWS_GAP_RATIO                = 20
+  SCORE_VIEWS_GAP_PENALTY              = 50
+  SCORE_MIN_DOWNLOAD                   = 50
+  SCORE_LIMIT_MARGIN                   = 10
+  LIMIT_MAX_DURATION_DIFF              = 90
+  YOUTUBE_RESULTS                      = 5
+
+Non in config.json (costante nel codice): SUSPECT_DURATION_DIFF = 30
+(logica/youtube.py).
+
+
+────────────────────────────────────────────────────────────────
+LIMITI NOTI
+────────────────────────────────────────────────────────────────
+
+  - Il bonus Topic (+25) non verifica di chi sia il canale Topic: un canale
+    "Max - Topic" con un feat. dell'artista cercato (+25 artista nel titolo)
+    può battere l'upload dell'artista stesso (caso "Lassala", 112 contro 100).
+  - Gli altri artisti di un feat. costano -10 a testa come "parole extra".
+  - I risultati di YouTube cambiano nel tempo: la stessa ricerca ripetuta a
+    distanza può dare candidati diversi.
+  - Titoli che su YouTube si chiamano diversamente (es. "A parte te" → "Attimi")
+    non si trovano: è corretto scartarli.
 
 FINE DOCUMENTO
