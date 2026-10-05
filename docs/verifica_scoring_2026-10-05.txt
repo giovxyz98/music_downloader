@@ -37,22 +37,31 @@ RISULTATI DEI TEST (solo ricerca)
 - Caso impostore #5 ("Cu te 'mparaviso", Gianni Celeste): invariato, sceglie sempre
   il canale ufficiale (Gianni Celeste TV / Seamusica).
 
-I 16 LINK CAMBIATI
-  Uguali o migliori (14): stesso canale ma durata piu' vicina, oppure canale ufficiale
-  dell'artista al posto di un upload di fan (Nun m'annamoro cchiu', Meravigliosamente -
-  Live, 'A bomba, Tu comm'a mme, Dint' 'E Mane, Te credevo sincera - Live, Libero,
-  Sona e canta, Addo' vaje, Un ricordo d'estate, Volgio abortire, Vaco pazzo pa' femmena
-  mia, Amanti no, Nun cunuscevo ammore - Karaoke Version).
-  PEGGIORI (2) - DA CONTROLLARE A MANO:
-  * Lassala (249s): era 'Lassala' sul canale dell'artista (giannivezzositv/seamusica, 250s),
-    ora 'Lassala (feat. Gianni Vezzosi)' del canale 'Max - Topic' (246s): versione di un
-    altro artista.
-  * La signora vestita di nero parte 1 (331s): era Seamusica Official (332s), ora
-    'Gianni Vezzosi feat Natale Galletta - La Signora...' di NEOMELODIC SOUND (330s):
-    canale di fan, forse registrazione diversa.
-  Causa probabile: senza la penalita' views "larga" il candidato ufficiale non vince piu'
-  su un candidato con titolo piu' lungo ma punteggio testuale simile. Non indagato.
-
+I 16 LINK CAMBIATI - VERIFICATI A MANO (metadati reali dei video, non solo il titolo)
+  Il link del report non e' sempre quello giusto: in diversi casi il nuovo e' MIGLIORE.
+  Nuovo migliore (8):
+  * Te credevo sincera - Live: report = versione studio 251s; nuovo = live 307s, album
+    "Attenti a noi... 2! (Live tour 2011)" (era richiesta la live).
+  * 'A bomba: report = "Che Bomba" 2024 (altra canzone, 202s); nuovo = 'A bomba 170s.
+  * Meravigliosamente - Live: report = upload di un fan 349s; nuovo = live ufficiale 292s.
+  * Dint' 'E Mane: report = video "Testo" 248s; nuovo = traccia ufficiale album "Immagini" 227s.
+  * Nun cunuscevo ammore - Karaoke Version: report = versione normale; nuovo = la karaoke.
+  * Tu comm'a mme: durata 227s (attesa 226s) invece di 211s.
+  * Sona e canta, Libero: canale ufficiale dell'artista al posto di un upload di fan.
+  Equivalenti (4): Volgio abortire (nuovo ha titolo/album esatti "Collezione"), Vaco pazzo pa'
+  femmena mia (stessa canzone, 250s), Amanti no (D.V. More Record vs ALPHARECORD),
+  Addo' vaje (nuovo non leggibile da yt-dlp: "Requested format is not available";
+  il programma ripiega sul candidato successivo).
+  Tornati uguali al report al secondo controllo (3): Un ricordo d'estate, Nun m'annamoro
+  cchiu', La signora vestita di nero parte 1 -> il "peggioramento" visto prima era
+  variabilita' dei risultati YouTube tra due ricerche, non dello scoring.
+  PEGGIORE (1): Lassala (249s). Report = upload del canale dell'artista (album "I miei giorni
+  di celebrita'", 250s). Nuovo = "Lassala (feat. Gianni Vezzosi)" dal canale "Max - Topic"
+  (album "Insieme a lui" di Max, 246s). IMPORTANTE: sugli STESSI risultati il codice
+  vecchio sceglie la stessa cosa del nuovo (Score 112 contro 100: bonus +25 canale Topic
+  e +25 artista nel titolo contro +20 del primo risultato), quindi NON e' una regressione
+  di questa modifica ma un limite gia' presente dello scoring. Non corretto: toccarlo
+  rischierebbe di rompere altro. Se serve, scaricare a mano 7ajvbKY62WU.
 
 FALSI POSITIVI POSSIBILI (canzoni prima scartate, ora accettate - da ascoltare)
   Dai test di ricerca, nessun avviso nel report le coprirebbe tutte prima della
