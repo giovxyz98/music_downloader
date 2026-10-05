@@ -18,6 +18,9 @@ from .config import (
 )
 
 
+SUSPECT_DURATION_DIFF = 30   # oltre questa differenza (s) di durata il risultato scelto finisce segnalato nel report
+
+
 class YouTubeSearcher:
 
     _BAD_KEYWORDS      = {"live", "karaoke", "instrumental", "remix", "cover",
@@ -57,16 +60,18 @@ class YouTubeSearcher:
         return art_n in v or art_n in ch
 
     @staticmethod
-    def _max_same_artist_views(entries: list, art_n: str) -> int:
+    def _max_same_artist_views(entries: list, art_n: str, tit_n: str = "") -> int:
         """Views massime tra i candidati che citano l'artista cercato nel titolo
-        o nel canale. Usato come riferimento per _score: un candidato con views
-        molto più basse di questo massimo è probabilmente un canale
-        omonimo/impostore (problemi_scoring.txt #5), non semplicemente meno
-        popolare — per questo il confronto è ristretto agli stessi-artista,
-        così un video virale di un ARTISTA DIVERSO non abbassa ingiustamente
-        il punteggio del candidato giusto ma poco visto."""
+        o nel canale E contengono il titolo cercato. Usato come riferimento per
+        _score: un candidato con views molto più basse di questo massimo è
+        probabilmente un canale omonimo/impostore (problemi_scoring.txt #5) che
+        duplica la stessa canzone, non semplicemente meno popolare — per questo
+        il confronto è ristretto a stesso artista e stessa canzone: un video
+        virale di un ARTISTA DIVERSO, o di un'ALTRA canzone dello stesso artista,
+        non deve abbassare il punteggio del candidato giusto ma poco visto."""
         matching = [e.get("view_count") or 0 for e in entries
-                    if YouTubeSearcher._matches_artist(e, art_n)]
+                    if YouTubeSearcher._matches_artist(e, art_n)
+                    and (not tit_n or tit_n in YouTubeSearcher._normalize(e.get("title", "")))]
         return max(matching) if matching else 0
 
     @staticmethod
@@ -110,6 +115,8 @@ class YouTubeSearcher:
                 score += SCORE_OFFICIAL_KEYWORD
                 logger.debug(f"{p} keyword ufficiale {k!r} nel titolo → +{SCORE_OFFICIAL_KEYWORD} (tot={score})")
         for k in YouTubeSearcher._BAD_KEYWORDS:
+            if k in tit_n:
+                continue  # la parola e' nel titolo richiesto (es. "Mio caro - Live"): non e' un difetto
             if k in v:
                 score -= SCORE_BAD_KEYWORD_PENALTY
                 logger.debug(f"{p} bad keyword {k!r} nel titolo → -{SCORE_BAD_KEYWORD_PENALTY} (tot={score})")
@@ -165,7 +172,7 @@ class YouTubeSearcher:
         ch = YouTubeSearcher._normalize(entry.get("uploader", "") or entry.get("channel", ""))
         if art_n not in ch or art_n not in v or not tit_n or tit_n not in v:
             return ""
-        if any(k in v for k in YouTubeSearcher._BAD_KEYWORDS):
+        if any(k in v and k not in tit_n for k in YouTubeSearcher._BAD_KEYWORDS):
             return ""
         dur = entry.get("duration") or 0
         if dur and duration and abs(dur - duration) > LIMIT_MAX_DURATION_DIFF:
@@ -226,8 +233,8 @@ class YouTubeSearcher:
                 logger.warning(f"[YouTube]{tag} Nessun risultato per: '{query}'")
                 why(f"YouTube non ha restituito nessun risultato per '{query}' (puo' essere temporaneo: riprova)")
                 return []
-            max_same_artist_views = YouTubeSearcher._max_same_artist_views(entries, art_n)
-            logger.debug(f"[YouTube]{tag} max views tra i candidati che citano l'artista {art_n!r}: {max_same_artist_views}")
+            max_same_artist_views = YouTubeSearcher._max_same_artist_views(entries, art_n, tit_n)
+            logger.debug(f"[YouTube]{tag} max views tra i candidati con l'artista {art_n!r} e il titolo {tit_n!r}: {max_same_artist_views}")
             scored = []
             for i, e in enumerate(entries):
                 base = YouTubeSearcher._score(e, art_n, tit_n, duration, orig_art_n, tag=tag, idx=i,
@@ -253,6 +260,23 @@ class YouTubeSearcher:
                     f"'{top.get('title', '?')}' [{top.get('uploader') or top.get('channel') or '?'}] "
                     f"durata {top.get('duration') or '?'}s (attesa {duration or '?'}s) {top.get('url', '')}")
                 return []
+            top = scored[0][1]
+            top_dur = top.get("duration") or 0
+            top_text = (YouTubeSearcher._normalize(top.get("title", "")) + " "
+                        + YouTubeSearcher._normalize(top.get("uploader", "") or top.get("channel", "")))
+            # Non si scarta (le versioni di Spotify e YouTube spesso differiscono, es. rifatte
+            # o live): si segnala nel report cosi' si puo' controllare a mano.
+            doubts = []
+            if duration and top_dur and abs(top_dur - duration) > SUSPECT_DURATION_DIFF:
+                doubts.append(f"durata video {top_dur}s, attesa {duration}s")
+            if art_n and art_n not in top_text:
+                doubts.append(f"l'artista '{artist}' non compare nel titolo ne' nel canale "
+                              f"('{top.get('uploader') or top.get('channel') or '?'}')")
+            if doubts:
+                note = "ATTENZIONE: " + "; ".join(doubts) + " - verifica che sia la versione giusta"
+                logger.warning(f"[YouTube]{tag} {note} → {top.get('url')}")
+                if diagnostics is not None:
+                    diagnostics["note"] = note
             for rank, (s, e) in enumerate(scored, start=1):
                 views = e.get("view_count") or 0
                 logger.debug(

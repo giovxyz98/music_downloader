@@ -1,0 +1,88 @@
+VERIFICA SCORING YOUTUBE - 2026-10-05
+=====================================
+Modifiche a logica/youtube.py fatte dopo l'analisi dei fallimenti del download da txt
+(Gianni Vezzosi: 48 "nessun url" reali nella prima passata; dopo le correzioni: 19).
+STATO: da testare con download veri. Tutti i test sotto sono SOLO RICERCA (nessun mp3
+scaricato), confrontando il codice precedente (HEAD) con quello nuovo sugli stessi
+risultati YouTube.
+
+
+COSA E' STATO CAMBIATO
+1. Penalita' views (-50): il riferimento "views massime dello stesso artista" ora si
+   calcola solo sui candidati che contengono anche il titolo cercato. Prima un hit
+   dello stesso artista (altra canzone) penalizzava di -50 qualunque upload giusto ma
+   meno visto. Causa principale dei falsi scarti (es. "Amo lei" 83 -> 33).
+   La regola resta attiva per il caso impostore (problemi_scoring.txt #5).
+2. Bad keyword ("live", "remix", "cover", ...): non penalizzata se la parola e' gia' nel
+   titolo richiesto (es. "Mio caro - Live"). Vale anche per _limit_case.
+3. Avviso nel report (nessun effetto su cosa si scarica): se il candidato scelto ha durata
+   oltre 30s diversa da quella attesa, oppure l'artista non compare ne' nel titolo ne' nel
+   canale, la voce del report riceve "ATTENZIONE: ... verifica che sia la versione giusta".
+   (SUSPECT_DURATION_DIFF = 30 in youtube.py.)
+   Un blocco rigido sulla durata (>90s) e' stato provato e SCARTATO: mandava a vuoto
+   7 canzoni giuste di Nino D'Angelo (Spotify ha le versioni rifatte, piu' corte).
+Altro: ui/txt_app.py scrive nel log "[Progress] n/tot | ETA | MB" ogni 30s.
+
+
+RISULTATI DEI TEST (solo ricerca)
+- 172 canzoni (Vezzosi fallite/riuscite, Celeste, Nino D'Angelo): 0 canzoni perse.
+- 400 casuali su 4005: 368 invariate, 10 recuperate, 17 con link diverso, 0 perse.
+- Confronto con i link REALI dei report (600 casuali su 2524 con link):
+    il codice vecchio riconferma il link del report in 518;
+    su quelle 518 il nuovo CAMBIA link in 16 (3%) - dettaglio sotto;
+    il nuovo non trova nulla in 1 caso ("Me voglio scurda"): il vecchio non lo
+    confermava gia' (non e' una regressione di questa modifica).
+  I numeri variano un po' da un giro all'altro (primo giro: 10 cambiati, 3 scartate)
+  perche' i risultati di YouTube cambiano nel tempo.
+- Caso impostore #5 ("Cu te 'mparaviso", Gianni Celeste): invariato, sceglie sempre
+  il canale ufficiale (Gianni Celeste TV / Seamusica).
+
+I 16 LINK CAMBIATI
+  Uguali o migliori (14): stesso canale ma durata piu' vicina, oppure canale ufficiale
+  dell'artista al posto di un upload di fan (Nun m'annamoro cchiu', Meravigliosamente -
+  Live, 'A bomba, Tu comm'a mme, Dint' 'E Mane, Te credevo sincera - Live, Libero,
+  Sona e canta, Addo' vaje, Un ricordo d'estate, Volgio abortire, Vaco pazzo pa' femmena
+  mia, Amanti no, Nun cunuscevo ammore - Karaoke Version).
+  PEGGIORI (2) - DA CONTROLLARE A MANO:
+  * Lassala (249s): era 'Lassala' sul canale dell'artista (giannivezzositv/seamusica, 250s),
+    ora 'Lassala (feat. Gianni Vezzosi)' del canale 'Max - Topic' (246s): versione di un
+    altro artista.
+  * La signora vestita di nero parte 1 (331s): era Seamusica Official (332s), ora
+    'Gianni Vezzosi feat Natale Galletta - La Signora...' di NEOMELODIC SOUND (330s):
+    canale di fan, forse registrazione diversa.
+  Causa probabile: senza la penalita' views "larga" il candidato ufficiale non vince piu'
+  su un candidato con titolo piu' lungo ma punteggio testuale simile. Non indagato.
+
+
+FALSI POSITIVI POSSIBILI (canzoni prima scartate, ora accettate - da ascoltare)
+  Dai test di ricerca, nessun avviso nel report le coprirebbe tutte prima della
+  modifica 3; ora quelle con durata >30s o artista assente vengono segnalate:
+  Delirio D'Amore (Salvo Alessi, non Celeste), Pe piacere (fan, 240s vs 188s),
+  Pecchè (228s vs 261s), Che Me Fattu (171s vs 317s), Nun te voglio e te penso - Live
+  (278s vs 128s), Non saprai mai - Live (170s), Lui non sa - Live (fan, 149s vs 201s),
+  Zingara Dagli Occhi Azzurri (Salvo Alessi), Dint' 'e mane (227s vs 115s).
+
+
+RESTANO SCARTATE (19 su 740 nel giro reale di Vezzosi)
+  - 8 "YouTube non ha restituito nessun risultato" (anche in passate precedenti: probabile
+    che non esistano su YouTube con quel nome): Bomba di sesso (x2), Troppo Sex, Quanno tu
+    stai cu mme, Napule mare e canzone, Nuie Cumpagne/Cumpagni E Via, Mio Fratello.
+  - 4 vicine alla soglia 50: Joyeux Noel (49), Il mio amico migliore pt.1 - Live (47),
+    Il gatto Pt.2 (46), Povera mamma mia (46: 475s vs 247s, probabilmente sbagliata).
+  - resto: titoli/artisti che non corrispondono (Tu si' importante, Questa donna, Forza ca
+    boom, Dimmello tu, L'amante - Live, 'Na femmena - Live, ...). Corretto scartarle.
+  Soglia (SCORE_MIN_DOWNLOAD) NON abbassata: rischio di far entrare canzoni sbagliate.
+
+
+LIMITI DEI TEST
+  - Solo ricerca: non ho ascoltato nessun file e non e' stato rifatto un download completo.
+  - Campioni casuali (172 + 400 + 600 canzoni su ~4000): non l'intera libreria.
+  - I risultati YouTube cambiano nel tempo, i confronti fra giri
+    diversi non sono identici.
+
+
+ALTRO EMERSO (non risolto)
+  - Barra/ETA del download da txt: all'inizio sovrastima quando molte canzoni sono gia'
+    presenti (le salta ma non le conosce in anticipo); la stima dello spazio conta anche
+    quelle gia' scaricate (es. "~7.23 GB" con 298 MB davvero scaricati). Idea: all'avvio
+    escludere da ETA e stima i file che esistono gia'.

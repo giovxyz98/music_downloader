@@ -2,6 +2,7 @@
 ad albero e il numero di canzoni, conferma, segui l'avanzamento."""
 import os
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -10,7 +11,7 @@ from typing import List, Optional
 import customtkinter as ctk
 
 from logica.config import (ACCENT, ACCENT2, BG, CARD, ERROR, PANEL, PREFERRED_QUALITY,
-                           SUBTEXT, SUCCESS, TEXT)
+                           SUBTEXT, SUCCESS, TEXT, logger)
 from logica.progress_tracker import (ProgressTracker, estimate_total_bytes, format_bytes,
                                      format_duration)
 from logica.txt_download import item_file_size, make_manager, run_plans
@@ -127,6 +128,7 @@ class TxtDownloaderApp:
         self.tracker = ProgressTracker(queue, int(PREFERRED_QUALITY))
         self.tracker.start()
         self._running = True
+        self._last_log = 0.0
         self._tick()
         threading.Thread(target=self._worker, args=(plans, len(queue)), daemon=True).start()
 
@@ -245,7 +247,20 @@ class TxtDownloaderApp:
             self.tree.set(iid, "avanz", self._text_bar(self._pct[iid]))
         self._dirty.clear()
         self._refresh_stats()
+        self._log_progress()
         self.root.after(300, self._tick)
+
+    def _log_progress(self, every: float = 30.0):
+        """Riga nel log ogni 30s: serve a confrontare l'ETA mostrata con la durata reale."""
+        now = time.monotonic()
+        if now - self._last_log < every:
+            return
+        self._last_log = now
+        t = self.tracker
+        remaining = t.remaining_seconds()
+        logger.info(f"[Progress] {t.finished}/{t.total} concluse | ETA "
+                    f"{'n/d' if remaining is None else format_duration(remaining)} | "
+                    f"{format_bytes(t.downloaded_bytes)} / ~{format_bytes(t.estimated_bytes)} stimati")
 
     def _refresh_stats(self):
         t = self.tracker
