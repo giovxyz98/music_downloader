@@ -4,13 +4,16 @@ import os
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 from typing import List, Optional
 
 import customtkinter as ctk
 
-from logica.config import ACCENT, ACCENT2, BG, CARD, ERROR, PANEL, SUBTEXT, SUCCESS, TEXT
-from logica.txt_download import make_manager, run_plans
+from logica.config import (ACCENT, ACCENT2, BG, CARD, ERROR, PANEL, PREFERRED_QUALITY,
+                           SUBTEXT, SUCCESS, TEXT)
+from logica.progress_tracker import (ProgressTracker, estimate_total_bytes, format_bytes,
+                                     format_duration)
+from logica.txt_download import item_file_size, make_manager, run_plans
 from logica.txt_importer import ArtistPlan, build_plan, count_tracks, format_tree, parse_txt
 
 
@@ -95,7 +98,10 @@ class TxtDownloaderApp:
             else:
                 n = count_tracks(self.plans)
                 if n:
-                    summary = f"Saranno scaricate {n} {'canzone' if n == 1 else 'canzoni'}"
+                    size = estimate_total_bytes([i for p in self.plans for i in p.queue],
+                                                int(PREFERRED_QUALITY))
+                    summary = (f"Saranno scaricate {n} {'canzone' if n == 1 else 'canzoni'}"
+                               f"  —  spazio stimato ~{format_bytes(size)}")
                     if n_ign:
                         summary += f"  —  ATTENZIONE: {n_ign} righe del txt ignorate (vedi log)"
                     text = format_tree(self.plans, self.destination)
@@ -117,8 +123,11 @@ class TxtDownloaderApp:
         plans = self.plans
         queue = [item for p in plans for item in p.queue]
         self._build_progress(queue)
-        self._done = 0
         self._ok = 0
+        self.tracker = ProgressTracker(queue, int(PREFERRED_QUALITY))
+        self.tracker.start()
+        self._running = True
+        self._tick()
         threading.Thread(target=self._worker, args=(plans, len(queue)), daemon=True).start()
 
     def _build_progress(self, queue):
@@ -134,22 +143,14 @@ class TxtDownloaderApp:
         self.count_label.pack()
         self.general_bar = ctk.CTkProgressBar(body, progress_color=ACCENT, fg_color=CARD)
         self.general_bar.set(0)
-        self.general_bar.pack(fill="x", pady=(6, 8))
+        self.general_bar.pack(fill="x", pady=(6, 4))
+        self.eta_label = ctk.CTkLabel(body, text="Tempo rimanente: calcolo…",
+                                      text_color=SUBTEXT, font=("Segoe UI", 11))
+        self.eta_label.pack()
+        self.size_label = ctk.CTkLabel(body, text="", text_color=SUBTEXT, font=("Segoe UI", 11))
+        self.size_label.pack(pady=(0, 6))
 
-        scroll = ctk.CTkScrollableFrame(body, fg_color=PANEL)
-        scroll.pack(fill="both", expand=True)
-        self.rows = {}
-        for item in queue:
-            row = ctk.CTkFrame(scroll, fg_color=PANEL)
-            row.pack(fill="x", pady=1)
-            status = tk.StringVar(value="○")
-            tk.Label(row, textvariable=status, bg=PANEL, fg=SUBTEXT, width=2).pack(side="left")
-            ctk.CTkLabel(row, text=item.label, text_color=TEXT, anchor="w",
-                         font=("Segoe UI", 10)).pack(side="left", fill="x", expand=True, padx=4)
-            bar = ctk.CTkProgressBar(row, progress_color=ACCENT, fg_color=CARD, width=120, height=6)
-            bar.set(0)
-            bar.pack(side="right", padx=4)
-            self.rows[id(item)] = (bar, status)
+        self._build_list(body, queue)
 
         self.btn_bottom = ctk.CTkButton(
             body, text="Annulla download", command=self.manager.cancel_event.set,
@@ -162,28 +163,103 @@ class TxtDownloaderApp:
             self.manager, plans,
             on_track_started=lambda item, iid: after(0, self._on_started, iid),
             on_progress=lambda iid, pct: after(0, self._on_progress, iid, pct),
-            on_track_completed=lambda item, iid, ok, c, t: after(0, self._on_completed, iid, ok, total),
+            on_track_completed=lambda item, iid, ok, c, t: after(0, self._on_completed, iid, item, ok, total),
         )
         after(0, self._on_finished, failed, total)
 
+    def _build_list(self, body, queue):
+        """Un solo Treeview per tutte le canzoni: migliaia di righe si creano
+        e si aggiornano in un attimo (a differenza di una riga di widget ciascuna)."""
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Txt.Treeview", background=PANEL, fieldbackground=PANEL,
+                        foreground=TEXT, borderwidth=0, rowheight=22, font=("Segoe UI", 10))
+        style.configure("Txt.Treeview.Heading", background=CARD, foreground=SUBTEXT,
+                        borderwidth=0, font=("Segoe UI", 9, "bold"))
+        style.map("Txt.Treeview", background=[("selected", CARD)],
+                  foreground=[("selected", TEXT)])
+
+        frame = ctk.CTkFrame(body, fg_color=PANEL)
+        frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(frame, style="Txt.Treeview", show="headings",
+                                 columns=("stato", "canzone", "avanz"), selectmode="browse")
+        for col, text, width, anchor in (("stato", "", 30, "center"),
+                                         ("canzone", "Canzone", 330, "w"),
+                                         ("avanz", "Avanzamento", 150, "w")):
+            self.tree.heading(col, text=text, anchor="w")
+            self.tree.column(col, width=width, anchor=anchor, stretch=(col == "canzone"))
+        self.tree.tag_configure("active", foreground=ACCENT)
+        self.tree.tag_configure("ok", foreground=SUCCESS)
+        self.tree.tag_configure("fail", foreground=ERROR)
+        self.tree.tag_configure("wait", foreground=SUBTEXT)
+        sb = ctk.CTkScrollbar(frame, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+
+        self.rows = set()
+        self._pct = {}        # ultimo % ricevuto per canzone
+        self._dirty = set()   # canzoni da ridisegnare al prossimo giro
+        for item in queue:
+            iid = str(id(item))
+            self.rows.add(iid)
+            self.tree.insert("", "end", iid=iid, values=("○", item.label, ""), tags=("wait",))
+
+    @staticmethod
+    def _text_bar(pct):
+        n = int(pct // 10)
+        return f"{'▓' * n}{'░' * (10 - n)} {int(pct):3d}%"
+
     def _on_started(self, iid):
+        iid = str(iid)
         if iid in self.rows:
-            self.rows[iid][1].set("▶")
+            self.tree.item(iid, tags=("active",))
+            self.tree.set(iid, "stato", "▶")
+            self.tree.set(iid, "avanz", self._text_bar(0))
+            self.tree.see(iid)
 
     def _on_progress(self, iid, pct):
+        # yt-dlp chiama molto spesso: qui si memorizza e basta, il disegno lo fa _tick
+        iid = str(iid)
         if iid in self.rows:
-            self.rows[iid][0].set(pct / 100)
+            self._pct[iid] = pct
+            self._dirty.add(iid)
+            self.tracker.update(int(iid), pct)
 
-    def _on_completed(self, iid, ok, total):
-        self._done += 1
+    def _on_completed(self, iid, item, ok, total):
         self._ok += ok
-        bar, status = self.rows[iid]
-        bar.set(1.0 if ok else 0.0)
-        status.set("✓" if ok else "✗")
-        self.count_label.configure(text=f"{self._done} / {total}")
-        self.general_bar.set(self._done / total)
+        self.tracker.complete(int(iid), item, item_file_size(item) if ok else 0)
+        iid = str(iid)
+        self._dirty.discard(iid)
+        self.tree.item(iid, tags=("ok" if ok else "fail",))
+        self.tree.set(iid, "stato", "✓" if ok else "✗")
+        self.tree.set(iid, "avanz", "completata" if ok else (item.result_status or "fallita"))
+        self.count_label.configure(text=f"{self.tracker.finished} / {total}")
+        self._refresh_stats()
+
+    def _tick(self):
+        """Ridisegna le barre cambiate e aggiorna ETA/spazio, 3 volte al secondo."""
+        if not self._running:
+            return
+        for iid in self._dirty:
+            self.tree.set(iid, "avanz", self._text_bar(self._pct[iid]))
+        self._dirty.clear()
+        self._refresh_stats()
+        self.root.after(300, self._tick)
+
+    def _refresh_stats(self):
+        t = self.tracker
+        remaining = t.remaining_seconds()
+        self.eta_label.configure(text="Tempo rimanente: " + (
+            "calcolo…" if remaining is None else f"~{format_duration(remaining)}"))
+        self.general_bar.set(t.bar_fraction)
+        self.size_label.configure(
+            text=f"Scaricato: {format_bytes(t.downloaded_bytes)}  /  "
+                 f"~{format_bytes(t.estimated_bytes)} stimati")
 
     def _on_finished(self, failed, total):
+        self._running = False
+        self.eta_label.configure(text="")
         cancelled = self.manager.cancel_event.is_set()
         self.title_label.configure(
             text=f"{'Annullato' if cancelled else 'Completato'}: {self._ok}/{total}",
