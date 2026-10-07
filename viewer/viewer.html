@@ -7,82 +7,36 @@
       content="default-src 'none'; script-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <title>Log Viewer</title>
 <style>
-  :root {
-    --bg: #04101a; --panel: #07202f; --line: #0f4a63; --text: #bfeaf5; --dim: #5f9bb0;
-    --cyan: #3de6ff; --ok: #4ff0b0; --warn: #ffd166; --bad: #ff6b81; --pres: #7aa7ff;
-    color-scheme: dark;
+  :root { --bg:#fff; --text:#222; --dim:#8a8f98; --warn:#a66a00; --bad:#c62828; --link:#1a56b0; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1b1b1d; --text:#d6d6d6; --dim:#85898f; --warn:#d4a24c; --bad:#e57373; --link:#8ab4f8; }
   }
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 13px/1.5 "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
-    background-image: repeating-linear-gradient(0deg, rgba(61,230,255,.035) 0 1px, transparent 1px 3px);
-  }
-  header { padding: 18px 16px 10px; border-bottom: 1px solid var(--line); }
-  h1 { margin: 0; font-size: clamp(18px, 4vw, 26px); letter-spacing: .08em; color: var(--cyan);
-       text-shadow: 0 0 12px rgba(61,230,255,.45); }
-  h1 span { color: var(--dim); font-weight: 400; }
-  .src { color: var(--dim); font-size: 12px; margin-top: 4px; word-break: break-all; }
-  main { padding: 14px 16px 60px; max-width: 1280px; margin: 0 auto; }
-  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
-  select, input[type=search] {
-    background: var(--panel); color: var(--text); border: 1px solid var(--line);
-    padding: 6px 8px; font: inherit; min-width: 0;
-  }
-  input[type=search] { flex: 1 1 220px; }
-  select:focus, input:focus { outline: 1px solid var(--cyan); box-shadow: 0 0 10px rgba(61,230,255,.3); }
-  .chip {
-    cursor: pointer; user-select: none; border: 1px solid var(--line); background: var(--panel);
-    padding: 4px 9px; transition: border-color .15s, box-shadow .15s, opacity .15s; opacity: .55;
-  }
-  .chip.on { opacity: 1; border-color: var(--c, var(--cyan)); box-shadow: 0 0 8px color-mix(in srgb, var(--c, var(--cyan)) 40%, transparent); }
-  .chip b { color: var(--c, var(--cyan)); }
-  .run { border: 1px solid var(--line); background: rgba(7,32,47,.6); padding: 10px 12px; margin-bottom: 14px; }
-  .run h2 { margin: 0 0 2px; font-size: 14px; color: var(--cyan); }
-  .run .meta { color: var(--dim); word-break: break-all; }
-  .empty { color: var(--dim); padding: 16px 0; }
-  .song { border-top: 1px solid var(--line); }
-  .song:first-of-type { margin-top: 10px; }
-  .row { display: grid; grid-template-columns: 62px 1fr; gap: 4px 10px; padding: 7px 4px; cursor: pointer;
-         transition: background .12s; }
-  .row:hover { background: rgba(61,230,255,.07); }
-  .st { font-weight: 700; color: var(--c); white-space: nowrap; }
-  .nm { overflow-wrap: anywhere; }
-  .nm small { color: var(--dim); }
-  .detail { display: none; grid-column: 1 / -1; padding: 6px 8px 12px; background: rgba(0,0,0,.25);
-            border-left: 2px solid var(--c); margin: 2px 0 6px; overflow-x: auto; }
-  .song.open .detail { display: block; }
-  table { border-collapse: collapse; width: 100%; min-width: 560px; }
-  td, th { padding: 2px 8px 2px 0; text-align: left; white-space: nowrap; }
-  th { color: var(--dim); font-weight: 400; }
-  td.t { white-space: normal; overflow-wrap: anywhere; min-width: 160px; }
-  tr.fail td { color: var(--bad); }
-  tr.win td { color: var(--ok); }
-  .kv { margin-top: 6px; overflow-wrap: anywhere; }
-  .kv i { color: var(--dim); font-style: normal; display: inline-block; min-width: 78px; }
-  .note { color: var(--warn); margin-top: 4px; }
-  a { color: var(--cyan); }
-  .events { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 6px; color: var(--dim); }
-  .events summary { cursor: pointer; }
-  .ev { overflow-wrap: anywhere; margin: 2px 0; }
-  .ev.ERROR { color: var(--bad); } .ev.WARNING { color: var(--warn); }
-  @media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 Consolas, "Cascadia Mono", monospace; }
+  header { position: sticky; top: 0; background: var(--bg); padding: 10px 16px 8px; border-bottom: 1px solid var(--dim); }
+  .src { color: var(--dim); font-size: 12px; word-break: break-all; }
+  .bar { display: flex; flex-wrap: wrap; gap: 14px; align-items: baseline; margin-top: 6px; }
+  input[type=search] { flex: 1 1 200px; background: transparent; color: var(--text); border: 0;
+    border-bottom: 1px solid var(--dim); padding: 2px 0; font: inherit; border-radius: 0; min-width: 0; }
+  input:focus { outline: none; border-bottom-color: var(--text); }
+  .chip { cursor: pointer; user-select: none; color: var(--dim); margin-right: 12px; }
+  .chip.on { color: var(--text); }
+  .chip.on.WARNING { color: var(--warn); } .chip.on.ERROR { color: var(--bad); }
+  main { padding: 8px 16px 40px; }
+  .l { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .l .meta { color: var(--dim); }
+  .l.DEBUG { color: var(--dim); } .l.WARNING { color: var(--warn); } .l.ERROR { color: var(--bad); }
+  .note { color: var(--dim); padding: 4px 0; }
+  a { color: var(--link); text-decoration: none; } a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
 <header>
-  <h1>LOG VIEWER <span>// music downloader</span></h1>
   <div class="src" id="src"></div>
+  <div class="bar"><span id="levels"></span><input id="q" type="search" placeholder="cerca…"><a href="#fine">↓ fine</a></div>
 </header>
-<main>
-  <div class="bar">
-    <select id="run" aria-label="Lancio"></select>
-    <input id="q" type="search" placeholder="cerca artista, titolo, canale, id…">
-  </div>
-  <div class="bar" id="chips"></div>
-  <div id="out"></div>
-</main>
+<main id="out"></main>
+<div id="fine"></div>
 <script src="log_data.js"></script>
 <script src="viewer.js"></script>
 </body>
