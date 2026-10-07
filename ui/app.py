@@ -23,6 +23,8 @@ from logica.models import Artist, Album, Track, QueueItem
 from logica.queue_manager import QueueManager
 from logica.search_controller import SearchController
 from logica.text_utils import sanitize_filename
+from logica.txt_download import describe_failure
+from .progress_view import ProgressView
 from .widgets import scrolled_tree
 
 
@@ -56,10 +58,7 @@ class MusicDownloaderApp:
         self.current_features: List[Track] = []
         self.current_tracks:   List[Track] = []
 
-        self._dl_general_bar:   Optional[ctk.CTkProgressBar] = None
-        self._dl_general_label: Optional[ctk.CTkLabel]       = None
-        self._dl_total:         int                           = 0
-        self._track_widgets:    dict                          = {}
+        self._view: Optional[ProgressView] = None
 
         self._setup_menubar()
         self._build_layout()
@@ -205,90 +204,39 @@ class MusicDownloaderApp:
 
     # ── Pannello download ────────────────────────────────────
 
-    def _show_download_panel(self, queue: List[QueueItem]):
-        total = len(queue)
-        self._dl_total = total
+    def _show_download_panel(self, queue: List[QueueItem], destination: str):
         for w in self.queue_panel.winfo_children():
             w.destroy()
 
-        ctk.CTkLabel(self.queue_panel, text="Download in corso",
-                     font=("Segoe UI", 11, "bold"),
-                     fg_color="transparent", text_color=TEXT).pack(pady=(12, 2))
-
-        self._dl_general_label = ctk.CTkLabel(
-            self.queue_panel, text=f"0 / {total}",
-            font=("Segoe UI", 8), fg_color="transparent", text_color=SUBTEXT
-        )
-        self._dl_general_label.pack()
-
-        list_frame = ctk.CTkFrame(self.queue_panel, fg_color=PANEL)
-        list_frame.pack(fill="both", expand=True, padx=6, pady=(6, 4))
-        scroll_frame = ctk.CTkScrollableFrame(list_frame, fg_color=PANEL)
-        scroll_frame.pack(fill="both", expand=True)
-
-        self._track_widgets = {}
-        for item in queue:
-            item_id = id(item)
-            row = ctk.CTkFrame(scroll_frame, fg_color=PANEL)
-            row.pack(fill="x", pady=1, padx=2)
-
-            status_var = tk.StringVar(value="○")
-            tk.Label(row, textvariable=status_var, font=("Segoe UI", 9),
-                     bg=PANEL, fg=SUBTEXT, width=2, anchor="center").pack(side="left")
-
-            short = item.label[:24] + "…" if len(item.label) > 24 else item.label
-            ctk.CTkLabel(row, text=short, font=("Segoe UI", 8),
-                         fg_color="transparent", text_color=TEXT,
-                         anchor="w").pack(side="left", fill="x", expand=True, padx=(2, 4))
-
-            bar = ctk.CTkProgressBar(row, orientation="horizontal",
-                                     progress_color=ACCENT, fg_color=CARD,
-                                     width=55, height=6)
-            bar.set(0)
-            bar.pack(side="right")
-            self._track_widgets[item_id] = (bar, status_var)
-
-        bottom = ctk.CTkFrame(self.queue_panel, fg_color=PANEL)
-        bottom.pack(fill="x", padx=8, pady=(4, 4))
-        self._dl_general_bar = ctk.CTkProgressBar(
-            bottom, orientation="horizontal", progress_color=ACCENT, fg_color=CARD
-        )
-        self._dl_general_bar.set(0)
-        self._dl_general_bar.pack(fill="x", pady=2)
+        self._view = ProgressView(self.root, self.queue_panel, queue, destination,
+                                  bg=PANEL, compact=True)
+        self._view.frame.pack(fill="both", expand=True, padx=6, pady=(10, 4))
 
         ctk.CTkButton(self.queue_panel, text="Annulla download",
                       command=self.download_manager.cancel_event.set,
                       fg_color=PANEL, hover_color=CARD, text_color=SUBTEXT,
                       font=("Segoe UI", 9), corner_radius=6).pack(fill="x", padx=8, pady=(2, 8))
+        self._view.start()
 
     def _track_started(self, item: QueueItem, item_id: int):
-        w = self._track_widgets.get(item_id)
-        if w:
-            w[1].set("▶")
+        if self._view:
+            self._view.on_started(item_id)
 
     def _update_track_progress(self, item_id: int, percent: float):
-        w = self._track_widgets.get(item_id)
-        if w:
-            w[0].set(percent / 100)
+        if self._view:
+            self._view.on_progress(item_id, percent)
 
     def _track_completed(self, item: QueueItem, item_id: int, ok: bool,
                          completed: int, total: int):
-        w = self._track_widgets.get(item_id)
-        if w:
-            w[0].set(1.0 if ok else 0.0)
-            w[1].set("✓" if ok else "✗")
-        if self._dl_general_label is not None:
-            self._dl_general_label.configure(text=f"{completed} / {total}")
-        if self._dl_general_bar is not None and total > 0:
-            self._dl_general_bar.set(completed / total)
+        if self._view:
+            self._view.on_completed(item_id, item, ok)
 
     def _restore_queue_panel(self):
+        if self._view:
+            self._view.stop()
+            self._view = None
         for w in self.queue_panel.winfo_children():
             w.destroy()
-        self._dl_general_bar   = None
-        self._dl_general_label = None
-        self._dl_total         = 0
-        self._track_widgets    = {}
         self._build_queue_panel()
 
     # ── Utilità navigazione ──────────────────────────────────
@@ -882,7 +830,7 @@ class MusicDownloaderApp:
         queue = self.queue_manager.items
         self.download_manager.cancel_event.clear()
         self.btn_download.configure(state="disabled")
-        self._show_download_panel(queue)
+        self._show_download_panel(queue, destination)
         threading.Thread(
             target=self._run_download,
             args=(queue, destination),
@@ -910,6 +858,7 @@ class MusicDownloaderApp:
 
     def _download_all_done(self, successi: int, falliti: list, queue: List[QueueItem],
                            destination: str, artist_name: str, clear_queue: bool):
+        cancelled = self.download_manager.cancel_event.is_set()
         self._restore_queue_panel()
         totale = len(queue)
         self._refresh_history_menu()
@@ -919,10 +868,13 @@ class MusicDownloaderApp:
         else:
             self._refresh_queue_ui()
 
-        msg = f"Download completato!\n\nTotali: {totale}\nSuccessi: {successi}"
-        if falliti:
-            msg += f"\nFalliti: {len(falliti)}\n" + "\n".join(f"  - {f}" for f in falliti[:10])
-        messagebox.showinfo("Download completato", msg)
+        stato = "annullato" if cancelled else "completato"
+        msg = f"Download {stato}!\n\nTotali: {totale}\nSuccessi: {successi}"
+        failed = [describe_failure(i) for i in queue
+                  if i.result_status not in ("ok", "esistente")]
+        if failed:
+            msg += f"\nFalliti: {len(failed)}\n" + "\n".join(f"  - {f}" for f in failed[:10])
+        messagebox.showinfo(f"Download {stato}", msg)
 
         try:
             path = Path(destination).resolve()
@@ -959,67 +911,71 @@ class MusicDownloaderApp:
         destination = filedialog.askdirectory(title="Seleziona cartella di destinazione")
         if not destination:
             return
-
-        queue: List[QueueItem] = []
-        for album in albums:
-            try:
-                tracks = self.search_controller.get_album_tracks(album.id)
-            except Exception as e:
-                messagebox.showerror("Errore", f"Impossibile caricare '{album.nome}': {e}")
-                return
-            album_folder = str(Path(destination) / sanitize_filename(album.nome))
-            Path(album_folder).mkdir(parents=True, exist_ok=True)
-            for track in tracks:
-                queue.append(QueueItem(
-                    query=self._make_query(track),
-                    label=track.nome,
-                    meta=self._make_meta(track, album),
-                    destination=album_folder,
-                ))
-
-        if not queue:
-            return
-
         artist_name = self.current_artist.nome if self.current_artist else ""
-        self.download_manager.cancel_event.clear()
-        self._show_download_panel(queue)
-        threading.Thread(
-            target=self._run_download,
-            args=(queue, destination),
-            kwargs={"artist_name": artist_name, "clear_queue": False},
-            daemon=True,
-        ).start()
+
+        def _work():
+            queue: List[QueueItem] = []
+            for album in albums:
+                try:
+                    tracks = self.search_controller.get_album_tracks(album.id)
+                except Exception as e:
+                    self.root.after(0, lambda a=album, e=e: messagebox.showerror(
+                        "Errore", f"Impossibile caricare '{a.nome}': {e}"))
+                    return
+                album_folder = str(Path(destination) / sanitize_filename(album.nome))
+                Path(album_folder).mkdir(parents=True, exist_ok=True)
+                for track in tracks:
+                    queue.append(QueueItem(
+                        query=self._make_query(track),
+                        label=track.nome,
+                        meta=self._make_meta(track, album),
+                        destination=album_folder,
+                    ))
+            if queue:
+                self.root.after(0, self._start_loaded_download, queue, destination,
+                                {"artist_name": artist_name, "clear_queue": False})
+
+        self._ui_executor.submit(_work)
 
     def _download_album_direct(self, album: Album):
         destination = filedialog.askdirectory(title="Seleziona cartella di destinazione")
         if not destination:
             return
-        try:
-            tracks = self.search_controller.get_album_tracks(album.id)
-        except Exception as e:
-            messagebox.showerror("Errore", f"Impossibile caricare le tracce: {e}")
-            return
-
-        album_folder = Path(destination) / sanitize_filename(album.nome)
-        album_folder.mkdir(parents=True, exist_ok=True)
-
-        queue = [
-            QueueItem(
-                query=self._make_query(track),
-                label=track.nome,
-                meta=self._make_meta(track, album),
-            )
-            for track in tracks
-        ]
-
         artist_name = self.current_artist.nome if self.current_artist else ""
-        genre_info  = self.download_manager.get_genre(str(album.id))
 
+        def _work():
+            try:
+                tracks = self.search_controller.get_album_tracks(album.id)
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Errore", f"Impossibile caricare le tracce: {e}"))
+                return
+
+            album_folder = Path(destination) / sanitize_filename(album.nome)
+            album_folder.mkdir(parents=True, exist_ok=True)
+
+            queue = [
+                QueueItem(
+                    query=self._make_query(track),
+                    label=track.nome,
+                    meta=self._make_meta(track, album),
+                )
+                for track in tracks
+            ]
+            genre_info = self.download_manager.get_genre(str(album.id))
+            self.root.after(0, self._start_loaded_download, queue, str(album_folder),
+                            {"genre_info": genre_info, "artist_name": artist_name,
+                             "clear_queue": False})
+
+        self._ui_executor.submit(_work)
+
+    def _start_loaded_download(self, queue: List[QueueItem], destination: str, kwargs: dict):
+        """Parte sul thread grafico, dopo che le tracce sono state caricate in background."""
         self.download_manager.cancel_event.clear()
-        self._show_download_panel(queue)
+        self._show_download_panel(queue, destination)
         threading.Thread(
             target=self._run_download,
-            args=(queue, str(album_folder)),
-            kwargs={"genre_info": genre_info, "artist_name": artist_name, "clear_queue": False},
+            args=(queue, destination),
+            kwargs=kwargs,
             daemon=True,
         ).start()

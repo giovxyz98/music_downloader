@@ -122,11 +122,12 @@ def _report_section(plan: ArtistPlan, stamp: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def item_file_size(item) -> int:
-    """Dimensione dell'mp3 scaricato per questa canzone (0 se non c'e')."""
+def item_file_size(item, destination: str = "") -> int:
+    """Dimensione dell'mp3 scaricato per questa canzone (0 se non c'e').
+    `destination` vale per le canzoni senza cartella propria (app principale)."""
     try:
         name = DownloadManager._filename(item, item.meta or {})
-        return Path(item.destination, f"{name}.mp3").stat().st_size
+        return Path(item.destination or destination, f"{name}.mp3").stat().st_size
     except OSError:
         return 0
 
