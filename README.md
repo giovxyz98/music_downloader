@@ -127,7 +127,9 @@ config.json           impostazioni (workers, qualità, soglie di scoring, LOG_LE
 nel .bat). Da exe log, cache e config stanno in `%APPDATA%\MusicDownloader`.
 
 `avvia\crea_installer.bat` (dopo il precedente, serve Inno Setup 6) crea
-`installer\MusicDownloader-Setup.exe`: una procedura guidata che sceglie la cartella e
+`installer\MusicDownloader-Setup.exe` e poi cancella `build\`, `dist\` e
+`MusicDownloader.spec` (per rifare l'installer va rilanciato prima `build_exe.bat`):
+una procedura guidata che sceglie la cartella e
 copia i file, con i collegamenti sul Desktop e (facoltativo) nel menu Start. Non scrive nel
 registro e non compare in "App e funzionalità": per rimuoverlo si usa `Disinstalla.bat`
 nella cartella del programma, che cancella il programma, i collegamenti e i dati in
