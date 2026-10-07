@@ -1,5 +1,6 @@
 import re
 import threading
+import time
 from pathlib import Path
 from queue import Queue
 from typing import Callable, List, Optional
@@ -151,7 +152,7 @@ class DownloadManager:
             for n, c in enumerate(item.result_ranking, start=1):
                 mark = f"   ✗ {failed[c['url']]}" if c["url"] in failed else ""
                 lines.append(f"  {n}. {c['score']:>4}  {self._short_views(c['views']):>6}  "
-                             f"{c['channel'][:16]:<16}  {c['title'][:42]:<42}  {c['id']}{mark}")
+                             f"{c['channel'][:22]:<22}  {c['title'][:42]:<42}  {c['id']}{mark}")
         elif item.result_cached:
             lines.append("  (classifica non disponibile: link da cache)")
         if item.result_winner:
@@ -257,8 +258,8 @@ class DownloadManager:
         search_q:   Queue = Queue()
         download_q: Queue = Queue()
 
-        logger.info(f"[Batch] {'#' * 90}")
-        logger.info(f"[Batch] Inizio download: {total} tracce → {destination}")
+        started = time.monotonic()
+        logger.info("\n".join(["█" * 70, f"INIZIO ESECUZIONE  {total} tracce → {destination}", "█" * 70]))
         for idx, item in enumerate(queue):
             logger.debug(f"[Batch] Coda #{idx + 1:0{width}d}/{total}: '{item.label}' query='{item.query}'")
 
@@ -356,14 +357,13 @@ class DownloadManager:
         for t in download_threads:
             t.join()
 
-        logger.info(
-            f"[Batch] Fine: {state['successi']}/{total} successi, "
-            f"{len(state['falliti'])} falliti"
-        )
-        if state["falliti"]:
-            for f in state["falliti"]:
-                logger.info(f"[Batch] Fallita: {f}")
-        logger.info(f"[Batch] {'#' * 90}")
+        elapsed = int(time.monotonic() - started)
+        end = ["█" * 70,
+               f"FINE ESECUZIONE  {state['successi']}/{total} successi, {len(state['falliti'])} falliti"
+               f"  ({elapsed // 60}m {elapsed % 60:02d}s)"]
+        end += [f"  fallita: {f}" for f in state["falliti"]]
+        end.append("█" * 70)
+        logger.info("\n".join(end))
 
         self._cache.add_download(
             self._history_entry(queue, destination, artist_name, state["successi"])

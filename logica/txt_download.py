@@ -42,12 +42,15 @@ class ReportWriter:
     def _restore_links(self, old_report: str) -> None:
         """Le canzoni gia' su disco vengono saltate al ripristino: il loro link
         non e' piu' nel QueueItem, ma e' nelle sezioni dei lanci precedenti."""
-        known = {}
+        known, notes = {}, {}
         key = None
         for line in old_report.splitlines():
             if line.startswith("      http"):
                 if key:
                     known[key] = line.strip()
+            elif line.startswith("      !!! "):
+                if key:
+                    notes[key] = line.strip()[4:]
             elif " | " in line and not line.startswith(" "):
                 key = line.split(" | ")[0] + " | " + line.split(" | ")[1]
             else:
@@ -57,6 +60,7 @@ class ReportWriter:
                 url = known.get(_item_key(item))
                 if url:
                     item.result_url = url
+                    item.result_note = item.result_note or notes.get(_item_key(item), "")
 
     def update(self) -> Path:
         with self._lock:

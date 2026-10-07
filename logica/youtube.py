@@ -230,7 +230,7 @@ class YouTubeSearcher:
                 logger.debug(f"[YouTube]{tag} {len(raw_entries) - len(entries)} entries vuote/None scartate da yt-dlp")
             logger.debug(f"[YouTube]{tag} yt-dlp ha restituito {len(entries)} risultati grezzi (richiesti {YOUTUBE_RESULTS})")
             if not entries:
-                logger.warning(f"[YouTube]{tag} Nessun risultato per: '{query}'")
+                logger.debug(f"[YouTube]{tag} Nessun risultato per: '{query}'")
                 why(f"YouTube non ha restituito nessun risultato per '{query}' (puo' essere temporaneo: riprova)")
                 return []
             max_same_artist_views = YouTubeSearcher._max_same_artist_views(entries, art_n, tit_n)
@@ -255,11 +255,11 @@ class YouTubeSearcher:
             if best_score < SCORE_MIN_DOWNLOAD:
                 note = YouTubeSearcher._limit_case(scored[0][1], best_score, art_n, tit_n, duration)
                 if note:
-                    logger.warning(f"[YouTube]{tag} {note} → {scored[0][1].get('url')}")
+                    logger.debug(f"[YouTube]{tag} {note} → {scored[0][1].get('url')}")
                     if diagnostics is not None:
                         diagnostics["note"] = note
                     return [scored[0][1]["url"]]
-                logger.warning(
+                logger.debug(
                     f"[YouTube]{tag} Score troppo basso ({best_score}) per '{query}', download saltato"
                 )
                 top = scored[0][1]
@@ -281,7 +281,7 @@ class YouTubeSearcher:
                               f"('{top.get('uploader') or top.get('channel') or '?'}')")
             if doubts:
                 note = "ATTENZIONE: " + "; ".join(doubts) + " - verifica che sia la versione giusta"
-                logger.warning(f"[YouTube]{tag} {note} → {top.get('url')}")
+                logger.debug(f"[YouTube]{tag} {note} → {top.get('url')}")
                 if diagnostics is not None:
                     diagnostics["note"] = note
             for rank, (s, e) in enumerate(scored, start=1):
