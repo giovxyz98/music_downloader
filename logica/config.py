@@ -42,7 +42,8 @@ logger = logging.getLogger("music_downloader")
 if not logger.handlers:
     logger.setLevel(logging.DEBUG)
     _log_file = DATA_DIR / "music_downloader.log"
-    _fh = RotatingFileHandler(_log_file, maxBytes=5_000_000, backupCount=2, encoding="utf-8")
+    # Un solo file: la rotazione scatta solo oltre 1 GB (e tiene 1 copia precedente).
+    _fh = RotatingFileHandler(_log_file, maxBytes=1_000_000_000, backupCount=1, encoding="utf-8")
     _fh.setLevel(logging.DEBUG)  # abbassato dopo il load di config.json (LOG_LEVEL)
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logger.addHandler(_fh)

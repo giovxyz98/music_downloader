@@ -1,0 +1,57 @@
+COSA CAMBIEREI DAVVERO
+
+SCORE_TOPIC_CHANNEL                = 10   (era 25)
+    + Topic solo se il nome prima di "- Topic" coincide con l'artista (fuzzy), altrimenti 0
+SCORE_FIRST_RESULT_BONUS           = 5    (era 20)
+SCORE_VIEWS_GAP_PENALTY            = 30   (era 50)
+SCORE_VIEWS_GAP_RATIO              = 20   (invariato)
+SCORE_TITLE_MISSING_PENALTY        = 30   (nuova, -30 se il titolo cercato non è nel titolo del video)
+Parole extra: tolgo dal conteggio tutti gli artisti della traccia di Deezer, non solo il primo
+Matching: parole intere (token) per "bad keyword" e "topic", mai sottostringa
+
+TUTTO IL RESTO INVARIATO
+(25/30/15, ufficiale 10, durata 20/10/-20, fuzzy 0.3, extra 10, artista album 35, soglia 50, margine 10)
+
+
+PERCHÉ
+
+Topic 10 + verifica
+  Solo abbassare a 10 non basta: nel caso "Lassala" 112 vs 100 diventa 97 vs 100,
+  un margine di 3 punti. Con la verifica del nome il Topic di Max prende 0 e
+  il caso non si gioca più su un pareggio.
+
+Primo risultato 5
+  D'accordo con le note: deve fare solo da spareggio. Prendo 5 e non 8.
+
+Views 30, rapporto 20
+  D'accordo con le note. Ritiro la mia idea di escludere la penalità quando
+  l'artista è nel canale: l'impostore di "Cu te 'mparaviso" è un canale omonimo,
+  quindi avrebbe l'artista nel canale e la penalità non scatterebbe mai.
+  Da verificare: con -30 quel caso deve ancora ribaltarsi (680 vs 55.000 views).
+  Se non si ribalta, il problema è altrove nei punteggi, non nel -30.
+
+Titolo mancante -30
+  È l'unica mia aggiunta che terrei. Con le note applicate un candidato senza il
+  titolo cercato arriva comunque a circa 55 (artista nel canale 15 + Topic 10 +
+  fuzzy ~10 + primo 5 + durata 20 se coincide) e supera la soglia 50 con la canzone sbagliata.
+  Il titolo deve essere un requisito, non solo un bonus.
+
+Parole extra
+  Tolgo gli artisti di Deezer invece di riconoscere "entità" come nelle note:
+  hai già la lista completa degli artisti, quindi è più semplice e più preciso
+  del riconoscimento dei nomi. Il tetto che avevo proposto non serve più.
+
+Parole cattive differenziate (note, punto 5): non lo farei
+  L'eccezione "parola già nel titolo richiesto" copre già il caso live/remix
+  voluto. Nove parametri al posto di uno aggiungono configurazione senza
+  risolvere un errore osservato.
+
+Scala durata graduale (mia): la scarto
+  Le note hanno ragione: la zona 15-60 s a zero è voluta e l'avevo inventata io
+  senza un caso reale che la richiedesse.
+
+Cap official +10 (note, punto 12): lascio com'è
+  Non c'è un caso che lo giustifichi.
+
+Soglia 50
+  Invariata, come dicono le note: prima si guardano i casi reali tra 40 e 60.

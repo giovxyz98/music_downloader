@@ -1,0 +1,115 @@
+LOG: DOVE SI TROVA, LIVELLI E COME ATTIVARE IL DEBUG
+Progetto: Music Downloader
+(scritto il 2026-10-07 sul codice di logica/config.py)
+════════════════════════════════════════════════════════════════
+
+
+────────────────────────────────────────────────────────────────
+DOVE SI TROVA
+────────────────────────────────────────────────────────────────
+
+  Da sorgente : dati/music_downloader.log (nella cartella del progetto)
+  Da exe      : %APPDATA%\MusicDownloader\music_downloader.log
+
+Il log è UNO SOLO per tutto: il download da txt (scarica_da_txt.py, anche con la
+sua interfaccia) e il programma principale (music_downloader.py) usano lo stesso
+logger, creato una volta sola in logica/config.py. Anche i messaggi interni di
+yt-dlp passano da lì.
+
+Rotazione: il file cresce fino a 1 GB; oltre quella soglia il file attuale
+diventa music_downloader.log.1 (se esisteva un .1 precedente viene sostituito) e
+si riparte da un file nuovo. Sotto 1 GB c'è quindi un solo file con tutto dentro.
+
+Non sono log, anche se somigliano:
+  - report_download.txt nella cartella di ogni artista (solo download da txt)
+  - dati/music_cache.json (ricerche e cronologia dei download)
+
+
+────────────────────────────────────────────────────────────────
+LIVELLI: COSA SALVA OGNI IMPOSTAZIONE
+────────────────────────────────────────────────────────────────
+
+I livelli sono a scalini: quello scelto salva anche tutti i più gravi.
+
+  LOG_LEVEL   salva
+  ─────────   ───────────────────────────────────────────────
+  DEBUG       DEBUG + INFO + WARNING + ERROR   (tutto)
+  INFO        INFO + WARNING + ERROR           (default, ATTIVO ORA)
+  WARNING     WARNING + ERROR
+  ERROR       solo ERROR
+
+Cosa scrive il programma a ciascun livello:
+
+  INFO (sempre presente da INFO in giù)
+    - banner INIZIO ESECUZIONE / FINE ESECUZIONE (successi, falliti, durata)
+    - un blocco per canzone: candidati con score, riga "scoring:" (primo in
+      classifica) e riga "download:" (link davvero scaricato), oppure
+      "già presente", "NON SCARICATA", "FALLITA"
+    - "[Progress] n/tot concluse | ETA | MB" ogni 30 secondi (download da txt)
+
+  WARNING / ERROR
+    - "0 risultati, riprovo col solo titolo", problemi di config.json, errori
+      non gestiti dei worker, errori di ricerca YouTube
+
+  DEBUG (solo con LOG_LEVEL = "DEBUG")
+    - scoring dettagliato: per ogni candidato ogni regola che scatta, con il
+      valore e il totale parziale ([Score] cand#N ...), dati grezzi del
+      candidato e testi normalizzati
+    - inizio/fine ricerca, classifica completa, views massime di riferimento
+    - tentativi di download per ogni link (con l'errore se falliscono), file
+      scritto, tag ID3, dizionario meta, generi, riga "Coda #n/N" per traccia
+    - hit della cache interna dei link
+    - messaggi interni di yt-dlp (avviso JavaScript, traceback dei 403)
+    - gli avvisi già riportati nel blocco della canzone (durata, caso limite,
+      score troppo basso, nessun risultato)
+
+Il DEBUG scrive centinaia di righe per canzone contro le circa 8 di INFO: il
+file cresce molto più in fretta. Per un caso singolo conviene attivarlo, rifare
+quella canzone e rimetterlo a INFO.
+
+Su console (se il programma è lanciato da terminale) compaiono solo WARNING ed
+ERROR, qualunque sia LOG_LEVEL.
+
+
+────────────────────────────────────────────────────────────────
+COME ATTIVARE (O DISATTIVARE) IL DEBUG
+────────────────────────────────────────────────────────────────
+
+1. Apri config.json nella radice del progetto
+     da sorgente : music_downloader\config.json
+     da exe      : %APPDATA%\MusicDownloader\config.json
+2. Cambia (o aggiungi) la chiave LOG_LEVEL:
+
+     {
+       ...
+       "SPOTIFY_TRACK_LIMIT": 10,
+       "LOG_LEVEL": "DEBUG"
+     }
+
+   Il valore va tra virgolette; se la chiave non è l'ultima serve la virgola
+   dopo. Valori ammessi: "DEBUG", "INFO", "WARNING", "ERROR".
+3. Riavvia il programma: il livello viene letto una sola volta all'avvio.
+4. Per disattivare rimetti "INFO". Se la chiave manca vale INFO.
+
+Se il JSON ha un errore di sintassi (es. virgola dimenticata) il programma lo
+rigenera con i valori di default e scrive un avviso nel log.
+
+Stato attuale: config.json contiene "LOG_LEVEL": "INFO".
+
+
+────────────────────────────────────────────────────────────────
+COME LEGGERLO
+────────────────────────────────────────────────────────────────
+
+  apri_log.bat (radice del progetto) = viewer/prepara_log.py + viewer/viewer.html
+  - rigenera viewer/log_data.js dal log e apre la pagina nel browser
+  - filtro per livello (DEBUG / INFO / WARNING / ERROR) e ricerca di testo
+  - il file è una fotografia del log al momento dell'apertura: per vedere righe
+    nuove si rilancia apri_log.bat
+  - mostra al massimo le ultime 30000 righe del log (4000 sullo schermo dopo i
+    filtri); il resto resta nel file
+  - il testo del log è scritto nella pagina sempre come testo (mai come HTML)
+  - il formato dei blocchi e dei banner è descritto in scoring/scoring_spiegazione.txt,
+    sezione "Come leggere il log"
+
+FINE DOCUMENTO

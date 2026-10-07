@@ -1,0 +1,68 @@
+NOTE DI PROGETTO: COSA RESTA DA FARE
+Progetto: Music Downloader
+(unisce da_vedere.txt, bug.txt e "operazioni fine sviluppi.txt"; rivisto il
+ 2026-10-07 controllando ogni voce sul codice. I vecchi punti di architettura
+ senza un problema osservato sono stati cancellati e il README è stato
+ riscritto. Lo storico di cosa è stato fatto sta in "Modifiche effettuate.txt".)
+════════════════════════════════════════════════════════════════
+
+
+────────────────────────────────────────────────────────────────
+1. COSA RESTA DA FARE (tutto opzionale, niente di urgente)
+────────────────────────────────────────────────────────────────
+
+1.1 Verificare l'eseguibile
+    build_exe.bat (cartella avvia/) crea dist/MusicDownloader con PyInstaller,
+    includendo yt-dlp, customtkinter e ffmpeg/ffprobe (da C:\Program
+    Files\ffmpeg\bin). La cartella dist/ esiste, ma NON è stato verificato in
+    questa revisione che l'exe parta e scarichi: da provare prima di darlo a
+    qualcuno. Da exe log, cache e config stanno in %APPDATA%\MusicDownloader.
+    (Era il punto "Creazione eseguibile standalone" di "operazioni fine sviluppi".)
+
+1.2 Qualche test automatico (opzionale)
+    Non esiste una test suite: in dev/ c'è solo test_pipeline.py, un dry-run
+    manuale dello scoring, non un test. Dove avrebbero più senso, perché lì è
+    stato trovato un bug vero il 2026-10-07:
+      - txt_importer.py (parser del formato del txt)
+      - ReportWriter in txt_download.py (ripristino di link e note alla ripresa)
+      - progress_tracker.py (puro, senza tkinter; verificato solo con script
+        non salvati nel repo)
+    QueueManager e DownloadManager sono isolati dalla GUI e testabili, ma non
+    c'è un caso osservato che lo richieda.
+
+1.3 Verifiche rimaste sul download da txt
+    Fatto: ricerche reali su campioni di 172, 400 e 600 canzoni; download reale
+    da 50 canzoni (Nino D'Angelo); il 2026-10-07 download reale di 10 + 3
+    canzoni di Geolier con ripresa (log a blocchi, link nel report).
+    Non fatto: il download lungo da 2000+ canzoni dal vivo con il nuovo log; il
+    Treeview a occhio con il tema scuro (colori, intestazioni, scrollbar); il
+    caso "OK*" (fallback su un candidato di riserva) mai visto dal vivo nel
+    log. I file scaricati non sono stati riascoltati: le canzoni con
+    "ATTENZIONE" nel report (durata distante o artista assente) vanno
+    controllate a mano. Dettagli in docs/scoring/verifica_scoring_2026-10-05.txt.
+
+1.4 Scoring
+    Limiti noti e proposte di modifica: vedi docs/scoring/ (problemi_scoring.txt
+    #7 e #8, note_amico.txt). Non toccati in questa revisione.
+
+
+────────────────────────────────────────────────────────────────
+2. BUG NOTI
+────────────────────────────────────────────────────────────────
+
+Nesuno al momento
+
+
+────────────────────────────────────────────────────────────────
+3. CODICE DORMIENTE DA NON CANCELLARE
+────────────────────────────────────────────────────────────────
+
+  - Spotify: logica/searcher_spotify.py e spotify_auth.py non sono usati (il
+    searcher attivo è Deezer, dal 2026-10-03). Si tengono per poter tornare a
+    Spotify scambiando i nomi (vedi #82 del changelog). Il secrets.json non c'è
+    nel progetto. Se si riadotta Spotify: la quota reale del tier Development
+    non è documentata e il crawl "Featuring" non è mai stato riverificato dopo
+    il blocco del 2026-09-20.
+
+
+FINE DOCUMENTO

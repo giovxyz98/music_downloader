@@ -9,6 +9,7 @@ Uso:
 """
 import json
 import re
+from collections import deque
 import sys
 import webbrowser
 from pathlib import Path
@@ -24,19 +25,25 @@ MAX_TEXT = 4000       # caratteri per record (difesa da traceback enormi)
 def read_records(paths):
     """[data, ora, livello, testo] per record; le righe senza timestamp (blocchi,
     traceback) appartengono al record precedente."""
-    records = []
+    # Lettura a flusso: il log puo' pesare centinaia di MB, in memoria restano solo
+    # gli ultimi MAX_RECORDS record. Ritorna (record, quanti_scartati).
+    records = deque(maxlen=MAX_RECORDS)
+    total = 0
     for path in paths:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            f = open(path, encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for line in text.splitlines():
-            m = LINE_RE.match(line)
-            if m:
-                records.append(list(m.groups()))
-            elif records:
-                records[-1][3] += "\n" + line
-    return records
+        with f:
+            for line in f:
+                line = line.rstrip("\r\n")
+                m = LINE_RE.match(line)
+                if m:
+                    records.append(list(m.groups()))
+                    total += 1
+                elif records and len(records[-1][3]) < MAX_TEXT:
+                    records[-1][3] += "\n" + line
+    return list(records), total - len(records)
 
 
 def main():
@@ -48,9 +55,8 @@ def main():
         from logica.config import DATA_DIR
         base = DATA_DIR / "music_downloader.log"
         paths = [base.with_name(base.name + ".2"), base.with_name(base.name + ".1"), base]
-    records = read_records(paths)
-    cut = max(0, len(records) - MAX_RECORDS)
-    records = [[d, t, lv, x[:MAX_TEXT]] for d, t, lv, x in records[cut:]]
+    records, cut = read_records(paths)
+    records = [[d, t, lv, x[:MAX_TEXT]] for d, t, lv, x in records]
     data = {"source": str(base), "cut": cut, "records": records}
     # json.dumps esce virgolette e backslash; "</" viene spezzato per non chiudere mai uno <script>
     payload = json.dumps(data, ensure_ascii=True).replace("</", "<\\/")

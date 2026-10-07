@@ -7,6 +7,7 @@
 !/logica/
 !/ui/
 !/docs/
+!/docs/scoring/
 !/viewer/
 !/avvia/
 !/esempi/
@@ -36,6 +37,7 @@
 
 # Includi le note dentro docs/
 !/docs/*.txt
+!/docs/scoring/*.txt
 
 # Escludi sempre
 **/__pycache__/
