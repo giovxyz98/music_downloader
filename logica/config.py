@@ -18,7 +18,7 @@ else:
     DATA_DIR, CONFIG_DIR = ROOT_DIR / "dati", ROOT_DIR
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# ffmpeg/ffprobe inclusi nel bundle exe (vedi build_exe.bat); da sorgente si usa il PATH.
+# ffmpeg/ffprobe inclusi nel bundle exe (vedi crea_programma.bat); da sorgente si usa il PATH.
 FFMPEG_DIR = str(Path(sys._MEIPASS) / "ffmpeg") if getattr(sys, "frozen", False) else None
 
 # ─────────────────────────────────────────────────────────────

@@ -29,8 +29,7 @@
 # Viewer del log: sorgenti si', dati generati no
 !/avvia/scarica_da_txt.bat
 !/avvia/start.bat
-!/avvia/build_exe.bat
-!/avvia/crea_installer.bat
+!/avvia/crea_programma.bat
 !/avvia/installer.iss
 !/avvia/Disinstalla.bat
 !/esempi/lista_esempio.txt

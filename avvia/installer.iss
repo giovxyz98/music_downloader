@@ -1,6 +1,6 @@
 ; Installer "finto" di Music Downloader: procedura guidata che COPIA i file e crea i collegamenti,
 ; senza scrivere nel registro e senza registrare il programma in Windows (come i PortableApps).
-; Si compila con avvia\crea_installer.bat dopo avvia\build_exe.bat. Disinstallazione: Disinstalla.bat
+; Si compila con avvia\crea_programma.bat (scelta 2). Disinstallazione: Disinstalla.bat
 ; (nella cartella del programma), non da "App e funzionalita'".
 
 [Setup]

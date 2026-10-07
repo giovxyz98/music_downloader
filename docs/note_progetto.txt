@@ -12,15 +12,15 @@ Progetto: Music Downloader
 ────────────────────────────────────────────────────────────────
 
 1.1 Verificare l'eseguibile
-    build_exe.bat (cartella avvia/) crea dist/MusicDownloader con PyInstaller,
+    crea_programma.bat (cartella avvia/, scelta 1) crea dist/MusicDownloader con PyInstaller,
     includendo yt-dlp, customtkinter e ffmpeg/ffprobe (da C:\Program
     Files\ffmpeg\bin). La cartella dist/ esiste, ma NON è stato verificato in
     questa revisione che l'exe parta e scarichi: da provare prima di darlo a
     qualcuno. Da exe log, cache e config stanno in %APPDATA%\MusicDownloader.
-    L'installer (avvia\crea_installer.bat, vedi changelog #87 (m)) impacchetta
-    quella cartella: va rigenerato dopo ogni nuovo build_exe.bat. A installer
-    creato, crea_installer.bat cancella da solo build/, dist/ e il .spec (per
-    rifarlo si rilancia prima build_exe.bat). Il dist/ e
+    L'installer (avvia\crea_programma.bat, scelta 2, vedi changelog #87 (m)) impacchetta
+    quella cartella: va rigenerato a ogni nuova versione. Con la scelta 2
+    crea_programma.bat fa exe + installer e poi cancella da solo build/, dist/ e
+    il .spec (la scelta 1 tiene dist/ e cancella solo build/ e il .spec). Il dist/ e
     l'installer sono stati rigenerati il 2026-10-07 con le modifiche di log e
     scoring; da provare: un download vero dall'exe e la procedura grafica.
     (Era il punto "Creazione eseguibile standalone" di "operazioni fine sviluppi".)
