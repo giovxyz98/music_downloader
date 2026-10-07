@@ -120,11 +120,18 @@ docs/                 note, changelog e documentazione dello scoring
 config.json           impostazioni (workers, qualità, soglie di scoring, LOG_LEVEL)
 ```
 
-## Eseguibile (senza Python)
+## Eseguibile e installer (senza Python)
 
 `avvia\build_exe.bat` crea `dist\MusicDownloader\MusicDownloader.exe` con PyInstaller
 (serve `pip install pyinstaller` e `ffmpeg.exe` + `ffprobe.exe` nella cartella indicata
 nel .bat). Da exe log, cache e config stanno in `%APPDATA%\MusicDownloader`.
+
+`avvia\crea_installer.bat` (dopo il precedente, serve Inno Setup 6) crea
+`installer\MusicDownloader-Setup.exe`: una procedura guidata che sceglie la cartella e
+copia i file, con i collegamenti sul Desktop e (facoltativo) nel menu Start. Non scrive nel
+registro e non compare in "App e funzionalità": per rimuoverlo si usa `Disinstalla.bat`
+nella cartella del programma, che cancella il programma, i collegamenti e i dati in
+`%APPDATA%\MusicDownloader` (config, cache e log), ma non la musica scaricata.
 
 ## Dipendenze
 
