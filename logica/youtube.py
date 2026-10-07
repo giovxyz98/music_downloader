@@ -75,6 +75,17 @@ class YouTubeSearcher:
         return max(matching) if matching else 0
 
     @staticmethod
+    def _topic_is_artist(ch: str, art_n: str) -> bool:
+        """Il bonus Topic vale solo se il nome prima di "- Topic" e' l'artista
+        cercato (stesso nome o molto simile): il Topic di un altro artista che
+        compare in un feat. non e' l'upload giusto (problemi_scoring.txt #1, #7).
+        Senza artista cercato non c'e' nulla da confrontare: il bonus resta."""
+        if not art_n:
+            return True
+        name = ch.replace("topic", "").strip()
+        return art_n in name or fuzz.ratio(art_n, name) >= 80
+
+    @staticmethod
     def _score(entry: dict, art_n: str, tit_n: str, duration: int,
                orig_art_n: str = "", tag: str = "", idx: int = 0,
                max_same_artist_views: int = 0) -> int:
@@ -108,8 +119,11 @@ class YouTubeSearcher:
             score += SCORE_ARTIST_IN_CHANNEL
             logger.debug(f"{p} artista {art_n!r} presente nel canale → +{SCORE_ARTIST_IN_CHANNEL} (tot={score})")
         if "topic" in ch:
-            score += SCORE_TOPIC_CHANNEL
-            logger.debug(f"{p} canale 'Topic' → +{SCORE_TOPIC_CHANNEL} (tot={score})")
+            if YouTubeSearcher._topic_is_artist(ch, art_n):
+                score += SCORE_TOPIC_CHANNEL
+                logger.debug(f"{p} canale 'Topic' dell'artista → +{SCORE_TOPIC_CHANNEL} (tot={score})")
+            else:
+                logger.debug(f"{p} canale 'Topic' ma non dell'artista {art_n!r} (canale_norm={ch!r}) → nessun bonus (tot={score})")
         for k in YouTubeSearcher._OFFICIAL_KEYWORDS:
             if k in v:
                 score += SCORE_OFFICIAL_KEYWORD

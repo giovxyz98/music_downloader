@@ -48,9 +48,12 @@ PUNTI IN PIÙ
   3. SE l'artista cercato è nel nome del canale
        ALLORA +15   [SCORE_ARTIST_IN_CHANNEL: 15]
        (nota: "giannivezzositv" NON contiene "gianni vezzosi" con lo spazio)
-  4. SE il nome del canale contiene "topic"
+  4. SE il nome del canale contiene "topic" E il nome prima di "- Topic" è
+     l'artista cercato (contenuto nel nome o simile: somiglianza almeno 80)
        ALLORA +25   [SCORE_TOPIC_CHANNEL: 25]
-       (canali auto-generati da YouTube; NON verifica di chi sia il canale)
+       (canali auto-generati da YouTube. Dal 2026-10-07 il Topic di un ALTRO
+        artista, per esempio quello di un feat., non prende il bonus. Se non c'è
+        un artista cercato il bonus resta)
   5. PER OGNI keyword ufficiale nel titolo del video ("official video",
      "official audio")
        ALLORA +10 a testa   [SCORE_OFFICIAL_KEYWORD: 10]
@@ -214,23 +217,29 @@ quindi non si mescola con le altre; l'ordine è quello di fine, il numero
 
   ══════════════════════════════════════════════════════════════════════
   [#01/10] Geolier - WINNER   (TUTTO È POSSIBILE)
-    1.   91    1.0M  Geôlier2 OFFICIAL  Geolier - WINNER (Lyric Video)   WIX4bc9MoiY
-    2.   90    569k  Geôlier2 OFFICIAL  Geolier - WINNER (Official Video) wr9-WV3bDhw
+    1.   91    1.0M  Geôlier2 OFFICIAL  Geolier - WINNER (Lyric Video)    WIX4bc9MoiY
+    2.   90    569k  Geôlier2 OFFICIAL  Geolier - WINNER (Official Video)  wr9-WV3bDhw
     ...
-    scoring:  https://www.youtube.com/watch?v=WIX4bc9MoiY
-    download: OK 320k valido  https://www.youtube.com/watch?v=WIX4bc9MoiY
+    scoring:  Geolier - WINNER (Lyric Video)  [Geôlier2 OFFICIAL]  https://www.youtube.com/watch?v=WIX4bc9MoiY
+    download: OK 320k valido  Geolier - WINNER (Lyric Video)  [Geôlier2 OFFICIAL]  https://www.youtube.com/watch?v=WIX4bc9MoiY
 
-  - le righe numerate sono i candidati: posizione, score, views, canale
-    (tagliato a 22 caratteri), titolo (tagliato a 42), id del video; "✗ errore"
-    sul candidato il cui download è fallito
-  - "scoring:" = il primo in classifica; "download:" = il link davvero scaricato
-    (se sono diversi, ha vinto un ripiego: stato "OK*" con "candidato N")
+  - le righe numerate sono i candidati: posizione, score, views, canale e titolo
+    COMPLETI (come scritti su YouTube, mai troncati; le colonne si allineano sul
+    più lungo del blocco), id del video; "✗ errore" sul candidato il cui
+    download è fallito
+  - "scoring:" = il primo in classifica; "download:" = il link davvero scaricato;
+    entrambe con titolo, [canale] e link (se sono diversi, ha vinto un ripiego:
+    stato "OK*" con "candidato N")
   - "320k" è il bitrate dell'mp3 prodotto, non della sorgente YouTube
-  - altri esiti: "già presente <link>" (file già su disco; il link viene
-    ripreso dal report), "NON SCARICATA: motivo", "FALLITA: tutti i N link
+  - altri esiti: "già presente <titolo> [canale] <link>" (file già su disco;
+    titolo, canale e link vengono ripresi dal report; per i report vecchi, scritti
+    prima del 2026-10-07, c'è solo il link), "NON SCARICATA: motivo", "FALLITA: tutti i N link
     hanno dato errore"
   - se il link arriva dalla cache interna la classifica non c'è
-    ("classifica non disponibile: link da cache") ma la riga scoring sì
+    ("classifica non disponibile: link da cache") ma le righe scoring e download
+    sì, con titolo e canale (la cache li conserva insieme al link)
+  - nel report_download.txt, sotto il link scelto, c'è la riga
+    "titolo: ... | canale: ..." del SOLO video scaricato, as-is
 
 A livello DEBUG (LOG_LEVEL = "DEBUG" in config.json) il log contiene anche ogni
 componente del punteggio di ogni candidato, riga per riga ([Score] cand#N ...),
@@ -276,9 +285,12 @@ Non in config.json (costante nel codice): SUSPECT_DURATION_DIFF = 30
 LIMITI NOTI
 ────────────────────────────────────────────────────────────────
 
-  - Il bonus Topic (+25) non verifica di chi sia il canale Topic: un canale
-    "Max - Topic" con un feat. dell'artista cercato (+25 artista nel titolo)
-    può battere l'upload dell'artista stesso (caso "Lassala", 112 contro 100).
+  - (RISOLTO 2026-10-07) Il bonus Topic non verificava di chi fosse il canale: un
+    canale "Max - Topic" con un feat. dell'artista cercato batteva l'upload
+    dell'artista ("Lassala", 112 contro 100; "Parlame 'e te", Fiorellino - Topic
+    85 contro 73). Ora il bonus vale solo se il nome prima di "- Topic" è
+    l'artista cercato; i due casi scelgono l'upload giusto (100 contro 87 e
+    73 contro 60) e su 190 altre canzoni il vincitore non cambia.
   - Le parole "cattive" e "topic" sono cercate come TESTO dentro il titolo/canale,
     non come parola intera (verificato 2026-10-07): "live" dentro "Olive" e
     "cover" dentro "Discovery" costano -25, un canale "topical" prende +25 come

@@ -42,12 +42,16 @@ class ReportWriter:
     def _restore_links(self, old_report: str) -> None:
         """Le canzoni gia' su disco vengono saltate al ripristino: il loro link
         non e' piu' nel QueueItem, ma e' nelle sezioni dei lanci precedenti."""
-        known, notes = {}, {}
+        known, notes, titles = {}, {}, {}
         key = None
         for line in old_report.splitlines():
             if line.startswith("      http"):
                 if key:
                     known[key] = line.strip()
+            elif line.startswith("      titolo: "):
+                if key:
+                    title, _, channel = line.strip()[len("titolo: "):].partition(" | canale: ")
+                    titles[key] = (title, channel)
             elif line.startswith("      !!! "):
                 if key:
                     notes[key] = line.strip()[4:]
@@ -61,6 +65,10 @@ class ReportWriter:
                 if url:
                     item.result_url = url
                     item.result_note = item.result_note or notes.get(_item_key(item), "")
+                    title, channel = titles.get(_item_key(item), ("", ""))
+                    if title:
+                        item.result_title, item.result_channel = title, channel
+                        item.result_info[url] = {"title": title, "channel": channel}
 
     def update(self) -> Path:
         with self._lock:
@@ -105,6 +113,8 @@ def _report_section(plan: ArtistPlan, stamp: str) -> str:
         lines.append(f"{head}{item.meta['title']} | {item.meta['artist']} | {status.upper()}{check}")
         if item.result_url:
             lines.append(f"      {item.result_url}")
+            if item.result_title:  # solo il link scelto, come scritto su YouTube
+                lines.append(f"      titolo: {item.result_title} | canale: {item.result_channel}")
         if item.result_note:
             lines.append(f"      !!! {item.result_note}")
         if item.result_error:

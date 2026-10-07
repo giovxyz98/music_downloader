@@ -72,7 +72,7 @@ Nuova ossessione
 - Su disco: `<destinazione>/<Artista>/<Album>/` per gli album, i singoli
   direttamente nella cartella dell'artista
 - Per ogni artista viene scritto `report_download.txt` con l'esito di ogni canzone,
-  il link YouTube da cui è stata scaricata e gli eventuali avvisi
+  il link YouTube da cui è stata scaricata (con titolo e canale del video) e gli eventuali avvisi
   ("ATTENZIONE: durata video …", "CASO LIMITE …"). Il report si aggiorna dopo ogni
   canzone e, se riprendi un download interrotto, le canzoni già presenti
   mantengono il loro link

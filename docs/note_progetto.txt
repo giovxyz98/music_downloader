@@ -42,8 +42,11 @@ Progetto: Music Downloader
     controllate a mano. Dettagli in docs/scoring/verifica_scoring_2026-10-05.txt.
 
 1.4 Scoring
-    Limiti noti e proposte di modifica: vedi docs/scoring/ (problemi_scoring.txt
-    #7 e #8, note_amico.txt). Non toccati in questa revisione.
+    Fatto il 2026-10-07: verifica del nome del canale Topic (problemi_scoring.txt
+    #7, risolto). Le altre proposte di docs/scoring/note_amico.txt sono state
+    provate su 200 canzoni e scartate (vedi #7): non servono. Resta aperto #8
+    (canzoni accettate con versione probabilmente diversa: solo segnalate nel
+    report). Idea non provata: parole intere per "topic" e parole cattive.
 
 
 ────────────────────────────────────────────────────────────────

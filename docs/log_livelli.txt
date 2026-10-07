@@ -42,9 +42,10 @@ Cosa scrive il programma a ciascun livello:
 
   INFO (sempre presente da INFO in giù)
     - banner INIZIO ESECUZIONE / FINE ESECUZIONE (successi, falliti, durata)
-    - un blocco per canzone: candidati con score, riga "scoring:" (primo in
-      classifica) e riga "download:" (link davvero scaricato), oppure
-      "già presente", "NON SCARICATA", "FALLITA"
+    - un blocco per canzone: candidati con score (titolo e canale completi),
+      riga "scoring:" (primo in classifica) e riga "download:" (link davvero
+      scaricato), entrambe con titolo, [canale] e link, oppure "già presente",
+      "NON SCARICATA", "FALLITA"
     - "[Progress] n/tot concluse | ETA | MB" ogni 30 secondi (download da txt)
 
   WARNING / ERROR

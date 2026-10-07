@@ -46,3 +46,6 @@ class QueueItem:
     result_ranking: list = field(default_factory=list)  # candidati YouTube con score (per il blocco di log)
     result_winner: str = ""   # link primo in classifica (scoring), anche se poi ha vinto un altro
     result_cached: bool = False  # link preso dalla cache interna: classifica non disponibile
+    result_info: dict = field(default_factory=dict)  # url -> {"title", "channel"} dei candidati (anche da cache o dal report)
+    result_title: str = ""    # titolo YouTube del link scaricato (as-is)
+    result_channel: str = ""  # canale YouTube del link scaricato (as-is)

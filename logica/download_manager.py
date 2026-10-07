@@ -32,6 +32,7 @@ class DownloadManager:
         self._genre_cache:     dict = {}
         self._nb_tracks_cache: dict = {}
         self._yt_url_cache:    dict = {}
+        self._yt_info_cache:   dict = {}   # query -> {url: {"title", "channel"}}, accanto a _yt_url_cache
 
         self.cancel_event = threading.Event()
 
@@ -69,6 +70,7 @@ class DownloadManager:
         if cached:
             logger.debug(f"[Cache]{tag} YouTube hit: '{item.query}' → {cached[0]}")
             item.result_cached, item.result_winner = True, cached[0]
+            item.result_info = dict(self._yt_info_cache.get(item.query, {}))
             return cached
         meta = item.meta or {}
         diag: dict = {}
@@ -84,8 +86,11 @@ class DownloadManager:
         item.result_note = diag.get("note", "")
         item.result_ranking = diag.get("ranking", [])
         item.result_winner = urls[0] if urls else ""
+        item.result_info = {c["url"]: {"title": c["title"], "channel": c["channel"]}
+                            for c in item.result_ranking}
         if urls:
             self._yt_url_cache[item.query] = urls
+            self._yt_info_cache[item.query] = dict(item.result_info)
         else:
             item.result_error = diag.get("reason", "")
         return urls
@@ -139,6 +144,14 @@ class DownloadManager:
         m = re.search(r"HTTP Error \d+", msg)
         return m.group(0) if m else msg[:60]
 
+    @staticmethod
+    def _label(item: QueueItem, url: str) -> str:
+        """'titolo  [canale]  link' (as-is da YouTube) se noto, altrimenti solo il link."""
+        info = (item.result_info or {}).get(url)
+        if not info:
+            return url
+        return f"{info['title']}  [{info['channel']}]  {url}"
+
     def _log_block(self, item: QueueItem, tag: str, meta: dict, outcome: str,
                    failed: dict = None, extra: List[str] = None) -> None:
         """Un solo blocco di log per canzone, scritto con UNA chiamata cosi' le righe
@@ -149,14 +162,17 @@ class DownloadManager:
         album = meta.get("album") or "Singoli"
         lines = [self.BLOCK_SEP, f"{tag} {artist} - {title}   ({album})"]
         if item.result_ranking:
+            # titolo e canale COMPLETI (mai troncati): le colonne si allineano sul piu' lungo del blocco
+            wc = max(len(c["channel"]) for c in item.result_ranking)
+            wt = max(len(c["title"]) for c in item.result_ranking)
             for n, c in enumerate(item.result_ranking, start=1):
                 mark = f"   ✗ {failed[c['url']]}" if c["url"] in failed else ""
                 lines.append(f"  {n}. {c['score']:>4}  {self._short_views(c['views']):>6}  "
-                             f"{c['channel'][:22]:<22}  {c['title'][:42]:<42}  {c['id']}{mark}")
+                             f"{c['channel']:<{wc}}  {c['title']:<{wt}}  {c['id']}{mark}")
         elif item.result_cached:
             lines.append("  (classifica non disponibile: link da cache)")
         if item.result_winner:
-            lines.append(f"  scoring:  {item.result_winner}")
+            lines.append(f"  scoring:  {self._label(item, item.result_winner)}")
         lines.extend(extra or [])
         lines.append(f"  {outcome}")
         logger.info("\n".join(lines))
@@ -177,7 +193,8 @@ class DownloadManager:
             item.result_status = "esistente"
             item.result_check = self._check_label(Path(dest, f"{filename}.mp3"))
             self._log_block(item, tag, meta, "già presente  " + (
-                item.result_url or "(link originale non noto)"))
+                self._label(item, item.result_url) if item.result_url
+                else "(link originale non noto)"))
             return True, None
 
         if urls is None:
@@ -199,12 +216,14 @@ class DownloadManager:
                 logger.debug(f"[Download]{tag} File scaricato: {filepath}, applico i tag ID3")
                 tag_file(filepath, meta, tag=tag)
                 item.result_url, item.result_status = url, "ok"
+                info = (item.result_info or {}).get(url, {})
+                item.result_title, item.result_channel = info.get("title", ""), info.get("channel", "")
                 item.result_check = self._check_label(filepath)
                 kbps = mp3_bitrate_kbps(filepath)
                 ok_mark = "OK" if i == 0 else f"OK* (candidato {i + 1})"
                 extra = [f"  !!! {item.result_note}"] if item.result_note else []
                 self._log_block(item, tag, meta,
-                                f"download: {ok_mark} {kbps}k {item.result_check}  {url}",
+                                f"download: {ok_mark} {kbps}k {item.result_check}  {self._label(item, url)}",
                                 failed, extra)
                 return True, None
             except Exception as e:
@@ -214,6 +233,8 @@ class DownloadManager:
                 continue
 
         item.result_url, item.result_status = urls[0], "errore"
+        info = (item.result_info or {}).get(urls[0], {})
+        item.result_title, item.result_channel = info.get("title", ""), info.get("channel", "")
         item.result_error = " || ".join(errors)
         self._log_block(item, tag, meta, f"FALLITA: tutti i {len(urls)} link hanno dato errore", failed)
         return False, item.label
