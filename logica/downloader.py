@@ -31,6 +31,13 @@ def check_mp3(filepath: str) -> str:
     return ""
 
 
+def mp3_bitrate_kbps(filepath: str) -> int:
+    try:
+        return round(MP3(filepath).info.bitrate / 1000)
+    except Exception:
+        return 0
+
+
 def tag_file(filepath: str, meta: dict, tag: str = "") -> None:
     if not filepath or not Path(filepath).exists():
         logger.warning(f"[Tags]{tag} File assente o vuoto, tagging saltato: {filepath!r}")

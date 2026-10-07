@@ -1,3 +1,4 @@
+import re
 import threading
 from pathlib import Path
 from queue import Queue
@@ -5,7 +6,7 @@ from typing import Callable, List, Optional
 
 from .cache import CacheManager
 from .config import logger
-from .downloader import AudioDownloader, tag_file, check_mp3
+from .downloader import AudioDownloader, tag_file, check_mp3, mp3_bitrate_kbps
 from .text_utils import sanitize_filename
 from .models import QueueItem
 from .searcher import MusicSearcher
@@ -66,6 +67,7 @@ class DownloadManager:
         cached = self._yt_url_cache.get(item.query)
         if cached:
             logger.debug(f"[Cache]{tag} YouTube hit: '{item.query}' → {cached[0]}")
+            item.result_cached, item.result_winner = True, cached[0]
             return cached
         meta = item.meta or {}
         diag: dict = {}
@@ -79,6 +81,8 @@ class DownloadManager:
             diagnostics     = diag,
         )
         item.result_note = diag.get("note", "")
+        item.result_ranking = diag.get("ranking", [])
+        item.result_winner = urls[0] if urls else ""
         if urls:
             self._yt_url_cache[item.query] = urls
         else:
@@ -118,6 +122,44 @@ class DownloadManager:
         dest = item.destination or destination
         return Path(dest, f"{self._filename(item, item.meta or {})}.mp3").exists()
 
+    BLOCK_SEP = "═" * 70
+
+    @staticmethod
+    def _short_views(n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1_000:
+            return f"{n / 1_000:.0f}k"
+        return str(n)
+
+    @staticmethod
+    def _short_error(msg: str) -> str:
+        msg = msg.replace("ERROR: ", "").strip()
+        m = re.search(r"HTTP Error \d+", msg)
+        return m.group(0) if m else msg[:60]
+
+    def _log_block(self, item: QueueItem, tag: str, meta: dict, outcome: str,
+                   failed: dict = None, extra: List[str] = None) -> None:
+        """Un solo blocco di log per canzone, scritto con UNA chiamata cosi' le righe
+        di worker diversi non si mescolano. `failed` = {url: errore breve}."""
+        failed = failed or {}
+        title = meta.get("title") or item.label
+        artist = meta.get("artist") or ""
+        album = meta.get("album") or "Singoli"
+        lines = [self.BLOCK_SEP, f"{tag} {artist} - {title}   ({album})"]
+        if item.result_ranking:
+            for n, c in enumerate(item.result_ranking, start=1):
+                mark = f"   ✗ {failed[c['url']]}" if c["url"] in failed else ""
+                lines.append(f"  {n}. {c['score']:>4}  {self._short_views(c['views']):>6}  "
+                             f"{c['channel'][:16]:<16}  {c['title'][:42]:<42}  {c['id']}{mark}")
+        elif item.result_cached:
+            lines.append("  (classifica non disponibile: link da cache)")
+        if item.result_winner:
+            lines.append(f"  scoring:  {item.result_winner}")
+        lines.extend(extra or [])
+        lines.append(f"  {outcome}")
+        logger.info("\n".join(lines))
+
     def download_single(self, item: QueueItem, destination: str,
                         progress_cb=None, genre_info: tuple = None,
                         urls: List[str] = None, tag: str = "") -> tuple:
@@ -127,28 +169,27 @@ class DownloadManager:
         artist   = meta.get("artist") or ""
         filename = self._filename(item, meta)
 
-        logger.info(f"{'─' * 90}")
-        logger.info(f"[Download]{tag} Inizio: '{item.label}' → query='{item.query}' "
-                    f"(artist={artist!r}, title={title!r}, meta={meta})")
+        logger.debug(f"[Download]{tag} Inizio: '{item.label}' → query='{item.query}' "
+                     f"(artist={artist!r}, title={title!r}, meta={meta})")
 
         if Path(dest, f"{filename}.mp3").exists():
-            logger.info(f"[Download]{tag} Saltato (già esiste): {filename}.mp3")
-            logger.info(f"{'─' * 90}")
             item.result_status = "esistente"
             item.result_check = self._check_label(Path(dest, f"{filename}.mp3"))
+            self._log_block(item, tag, meta, "già presente  " + (
+                item.result_url or "(link originale non noto)"))
             return True, None
 
         if urls is None:
             urls = self.resolve_url(item, tag=tag)
         if not urls:
-            logger.warning(f"[Download]{tag} Nessun URL trovato per: '{item.label}'")
-            logger.info(f"{'─' * 90}")
             item.result_status = "nessun url"
             item.result_error = item.result_error or f"nessun risultato YouTube valido per '{item.query}'"
+            self._log_block(item, tag, meta, f"NON SCARICATA: {item.result_error}")
             return False, item.label
 
         logger.debug(f"[Download]{tag} {len(urls)} URL candidati in ordine di score: {urls}")
         errors: List[str] = []
+        failed: dict = {}
         for i, url in enumerate(urls):
             try:
                 logger.debug(f"[Download]{tag} Tentativo {i+1}/{len(urls)}: {url}")
@@ -156,20 +197,24 @@ class DownloadManager:
                                                     progress_callback=progress_cb, tag=tag)
                 logger.debug(f"[Download]{tag} File scaricato: {filepath}, applico i tag ID3")
                 tag_file(filepath, meta, tag=tag)
-                logger.info(f"[Download]{tag} Completato: {filepath} ← {url}")
-                logger.info(f"{'─' * 90}")
                 item.result_url, item.result_status = url, "ok"
                 item.result_check = self._check_label(filepath)
+                kbps = mp3_bitrate_kbps(filepath)
+                ok_mark = "OK" if i == 0 else f"OK* (candidato {i + 1})"
+                extra = [f"  !!! {item.result_note}"] if item.result_note else []
+                self._log_block(item, tag, meta,
+                                f"download: {ok_mark} {kbps}k {item.result_check}  {url}",
+                                failed, extra)
                 return True, None
             except Exception as e:
-                logger.warning(f"[Download]{tag} URL {i+1} fallito per '{item.label}': {e}")
+                logger.debug(f"[Download]{tag} URL {i+1} fallito per '{item.label}': {e}")
+                failed[url] = self._short_error(str(e))
                 errors.append(f"{url} → {str(e).strip()[:200]}")
                 continue
 
-        logger.error(f"[Download]{tag} Tutti gli URL esauriti per: '{item.label}'")
-        logger.info(f"{'─' * 90}")
         item.result_url, item.result_status = urls[0], "errore"
         item.result_error = " || ".join(errors)
+        self._log_block(item, tag, meta, f"FALLITA: tutti i {len(urls)} link hanno dato errore", failed)
         return False, item.label
 
     # ── Batch (coda intera) ──────────────────────────────────────

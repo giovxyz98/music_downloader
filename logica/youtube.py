@@ -245,6 +245,13 @@ class YouTubeSearcher:
                 scored.append((base, e))
             scored.sort(key=lambda x: x[0], reverse=True)
             best_score = scored[0][0]
+            if diagnostics is not None:
+                diagnostics["ranking"] = [
+                    {"score": s, "views": e.get("view_count") or 0,
+                     "channel": e.get("uploader") or e.get("channel") or "?",
+                     "title": e.get("title") or "?", "id": e.get("id") or "?",
+                     "url": e.get("url") or ""}
+                    for s, e in scored]
             if best_score < SCORE_MIN_DOWNLOAD:
                 note = YouTubeSearcher._limit_case(scored[0][1], best_score, art_n, tit_n, duration)
                 if note:

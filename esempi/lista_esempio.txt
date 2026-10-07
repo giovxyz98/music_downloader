@@ -1,0 +1,13 @@
+// Righe che iniziano con // sono ignorate.
+// "# " apre un artista. Sotto [Album] vanno le tracce (numero davanti opzionale,
+// anno tra parentesi opzionale). Sotto [Singoli] i singoli, uno per riga.
+
+# Subsonica
+
+[Album] Microchip Emozionale (1999)
+1. Buncia
+2. Sonde
+3. Tutti i miei sbagli
+
+[Singoli]
+Nuova ossessione

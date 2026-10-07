@@ -7,21 +7,32 @@
 !/logica/
 !/ui/
 !/docs/
+!/viewer/
+!/avvia/
+!/esempi/
+!/dev/
 
 # Includi file specifici in root
 !.gitignore
 !README.md
 !music_downloader.py
-!test_pipeline.py
 !scarica_da_txt.py
-!scarica_da_txt.bat
-!start.bat
+!apri_log.bat
 !config.json
 !requirements.txt
 
 # Includi i .py dentro le cartelle del progetto
 !/logica/*.py
 !/ui/*.py
+
+# Viewer del log: sorgenti si', dati generati no
+!/avvia/scarica_da_txt.bat
+!/avvia/start.bat
+!/esempi/lista_esempio.txt
+!/dev/*.py
+!/viewer/prepara_log.py
+!/viewer/viewer.html
+!/viewer/viewer.js
 
 # Includi le note dentro docs/
 !/docs/*.txt

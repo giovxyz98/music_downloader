@@ -43,3 +43,6 @@ class QueueItem:
     result_note: str = ""     # avvisi su un download riuscito (es. caso limite)
     result_error: str = ""    # motivo del fallimento (ultima eccezione per URL)
     result_check: str = ""    # "valido" | "SOSPETTO: motivo" (controllo header mp3)
+    result_ranking: list = field(default_factory=list)  # candidati YouTube con score (per il blocco di log)
+    result_winner: str = ""   # link primo in classifica (scoring), anche se poi ha vinto un altro
+    result_cached: bool = False  # link preso dalla cache interna: classifica non disponibile

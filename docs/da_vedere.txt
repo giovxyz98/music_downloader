@@ -79,7 +79,7 @@ query già in coda.
 
 QueueManager, SearchController e DownloadManager sono ora isolati e
 testabili senza avviare tkinter, ma non esiste ancora una test suite:
-l'unica verifica automatizzabile è test_pipeline.py, che è comunque un
+l'unica verifica automatizzabile è dev/test_pipeline.py, che è comunque un
 dry-run manuale pensato per lo scoring, non un test. Varrebbe la pena
 aggiungere test unitari almeno per QueueManager (dedup, remove_indices)
 e DownloadManager (prepare_meta, _history_entry, gestione fallimenti in

@@ -37,6 +37,26 @@ class ReportWriter:
             if prefix.strip():
                 prefix = prefix.rstrip("\n") + "\n\n" + "=" * 60 + "\n"
         self._prefix = prefix
+        self._restore_links(prefix)
+
+    def _restore_links(self, old_report: str) -> None:
+        """Le canzoni gia' su disco vengono saltate al ripristino: il loro link
+        non e' piu' nel QueueItem, ma e' nelle sezioni dei lanci precedenti."""
+        known = {}
+        key = None
+        for line in old_report.splitlines():
+            if line.startswith("      http"):
+                if key:
+                    known[key] = line.strip()
+            elif " | " in line and not line.startswith(" "):
+                key = line.split(" | ")[0] + " | " + line.split(" | ")[1]
+            else:
+                key = None
+        for item in self.plan.queue:
+            if not item.result_url and item_file_size(item):
+                url = known.get(_item_key(item))
+                if url:
+                    item.result_url = url
 
     def update(self) -> Path:
         with self._lock:
@@ -50,6 +70,11 @@ class ReportWriter:
 
 def write_report(plan: ArtistPlan) -> Path:
     return ReportWriter(plan).update()
+
+
+def _item_key(item) -> str:
+    num = item.meta.get("tracknumber", "").split("/")[0]
+    return f"{num + '. ' if num else ''}{item.meta['title']} | {item.meta['artist']}"
 
 
 def _report_section(plan: ArtistPlan, stamp: str) -> str:

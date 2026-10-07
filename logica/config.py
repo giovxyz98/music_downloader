@@ -8,14 +8,15 @@ from pathlib import Path
 # Radice del progetto: logica/config.py -> logica/ -> root
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
-# Dove vivono log, cache e config: da sorgente accanto al codice; da exe
-# (PyInstaller) in %APPDATA%, perche' la cartella dell'exe one-file e'
-# temporanea e a ogni chiusura verrebbe cancellata.
+# Dove vivono log e cache (DATA_DIR) e config.json (CONFIG_DIR): da sorgente log e
+# cache in dati/ e config.json accanto al codice; da exe (PyInstaller) tutto in
+# %APPDATA%, perche' la cartella dell'exe one-file e' temporanea e a ogni
+# chiusura verrebbe cancellata.
 if getattr(sys, "frozen", False):
-    DATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "MusicDownloader"
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR = CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home())) / "MusicDownloader"
 else:
-    DATA_DIR = ROOT_DIR
+    DATA_DIR, CONFIG_DIR = ROOT_DIR / "dati", ROOT_DIR
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ffmpeg/ffprobe inclusi nel bundle exe (vedi build_exe.bat); da sorgente si usa il PATH.
 FFMPEG_DIR = str(Path(sys._MEIPASS) / "ffmpeg") if getattr(sys, "frozen", False) else None
@@ -102,7 +103,7 @@ _CFG_DEFAULTS: dict = {
     "SCORE_VIEWS_GAP_PENALTY":    50,
 }
 
-_cfg_file = DATA_DIR / "config.json"
+_cfg_file = CONFIG_DIR / "config.json"
 try:
     with open(_cfg_file, "r", encoding="utf-8") as _f:
         _cfg = {**_CFG_DEFAULTS, **json.load(_f)}
@@ -175,8 +176,10 @@ class YtDlpLogAdapter:
     def info(self, msg):
         logger.debug(f"[yt-dlp-internal]{self.tag} {msg}")
 
+    # warning/error di yt-dlp (avvisi JS, traceback dei 403...) restano nel file ma solo
+    # a DEBUG: l'esito vero lo scrive il blocco della canzone (download_manager).
     def warning(self, msg):
-        logger.warning(f"[yt-dlp-internal]{self.tag} {msg}")
+        logger.debug(f"[yt-dlp-internal][WARNING]{self.tag} {msg}")
 
     def error(self, msg):
-        logger.error(f"[yt-dlp-internal]{self.tag} {msg}")
+        logger.debug(f"[yt-dlp-internal][ERROR]{self.tag} {msg}")

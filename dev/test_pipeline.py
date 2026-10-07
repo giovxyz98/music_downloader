@@ -1,11 +1,13 @@
 """
 Dry-run della pipeline Deezer → YouTube senza scaricare nulla.
 Uso:
-    python test_pipeline.py "nome artista"
-    python test_pipeline.py "nome artista" "nome album"   # filtra su un album specifico
+    python dev/test_pipeline.py "nome artista"
+    python dev/test_pipeline.py "nome artista" "nome album"   # filtra su un album specifico
 """
 import sys
 import logging
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # radice del progetto
 sys.stdout.reconfigure(encoding="utf-8")
 from logica.config import logger
 logger.handlers[1].setLevel(logging.DEBUG)  # handlers[1] = StreamHandler (console)
@@ -63,6 +65,6 @@ def run(artist_query: str, album_filter: str = ""):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Uso: python test_pipeline.py <artista> [album]")
+        print("Uso: python dev/test_pipeline.py <artista> [album]")
         sys.exit(1)
     run(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "")
