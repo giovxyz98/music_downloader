@@ -14,7 +14,7 @@ Progetto: Music Downloader
 1.1 Verificare l'eseguibile
     crea_programma.bat (cartella avvia/) chiede cosa creare. Scelta 1: l'exe in
     dist/MusicDownloader (PyInstaller, con yt-dlp, customtkinter e ffmpeg/ffprobe
-    da C:\Program Filesfmpegin); cancella build/ e il .spec. Scelta 2: exe +
+    da C:\Program Files\ffmpeg\bin); cancella build/ e il .spec. Scelta 2: exe +
     installer (vedi changelog #87 (m)), poi cancella build/, dist/ e il .spec.
     Da exe log, cache e config stanno in %APPDATA%\MusicDownloader.
     Verificato il 2026-10-08: la scelta 2 arriva in fondo (PyInstaller, Inno Setup,
