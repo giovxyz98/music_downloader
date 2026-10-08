@@ -53,6 +53,113 @@ Progetto: Music Downloader
     report). Idea non provata: parole intere per "topic" e parole cattive.
 
 
+1.5 Puntini finali nelle cartelle (analisi 2026-10-08) - COMMITTATO, DA PROVARE con un album a puntini vero
+    Bug trovato nel run di Gianni Celeste (1118 canzoni, 1100 ok, 18 fallite):
+    70 canzoni risultavano "OK 0k SOSPETTO ... 'None'" e nel log "Tagging
+    saltato: None". Causa: per un album il cui titolo finisce con dei puntini
+    ("I miei successi e...", "Neve e'...") yt-dlp su Windows scrive in una
+    cartella con "#" al posto dei puntini ("I miei successi e..#"), mentre il
+    programma cercava in "...", che Windows trasforma in "I miei successi e"
+    (cartella vuota). Risultato: file non trovato, niente tag ID3, "gia'
+    presente" non lo vede mai (riscaricato a ogni run), controllo mp3 "SOSPETTO".
+    Colpiti anche i run del 4 e 5 ottobre.
+    Fix committato (2026-10-08) ma NON provato con un download vero di un album
+    con i puntini:
+      - logica/text_utils.py: nuova sanitize_folder_name (toglie punti e spazi
+        finali, solo per le cartelle; i nomi file non cambiano). Usata in
+        logica/txt_importer.py (cartelle artista e album) e ui/app.py (due punti
+        di "Scarica album"). Provato su disco: il nome creato coincide con quello
+        che userebbe yt-dlp.
+      - logica/download_manager.py: se il download finisce ma il file non e'
+        dove atteso ora e' un errore (si passa al link dopo), non piu' "OK".
+        Aggiunta di mia iniziativa: toglierla se non va bene.
+    DA FARE: (a) provarlo con un album a puntini; (b) le 12 cartelle "..#" in
+    Music le cancella Giovanni da solo (non toccarle): (141 mp3, NESSUNO ha il tag
+    ID3, controllato con mutagen): Gianni Celeste = I miei ricordi...#, I miei
+    successi e..#, Ieri E..#, Le Donne..#, Neve e'...#, Profumo di..#; Gianni
+    Vezzosi = E mo'..#, Insieme con..#, Io che..#, Mio caro..#; Nino D'Angelo =
+    Celebrita..#, Un'ora con..#. Non cancellate da me.
+    Spostarle nelle cartelle giuste sarebbe sbagliato (diventerebbero "gia'
+    presenti" e resterebbero senza tag); meglio cancellarle e rifare il run.
+
+1.6 Canzoni con "0 risultati" su YouTube (analisi 2026-10-08) - FATTO 2026-10-08 (da provare in un run vero)
+    Delle 18 fallite del run, 13 hanno "YouTube non ha restituito nessun
+    risultato" e 5 hanno punteggio < 50. Le 13 ESISTONO tutte su YouTube (quasi
+    sempre canale "Gianni Celeste TV / Seamusica"; es. Famme fesse e cuntente =
+    https://www.youtube.com/watch?v=n3Zo-8pTjfI, 210 s). E' yt-dlp/YouTube che
+    risponde con 0 risultati a certe query esatte ("Gianni Celeste - Famme fesse
+    e cuntente" = 0, "Gianni Celeste Famme" = 5). Non si sa PERCHE'. Le ricerche
+    sono instabili: "More...more" con "artista + prima parola" ha dato 5 in una
+    prova e 0 in quella dopo. Non e' un problema di scoring.
+    Le 13: Famme fesse e cuntente, Spogliate (x2), Però me faje murì (x2),
+    Addo stivè, Nunn'e' cchiu' ammore, Amori A luci Rosse, 'O spogliarello,
+    Bella spagnola (Piero D'Amante), More...more, E Cchiu' Me Piace, Che Sapute
+    Cumbinà. Le 5 a punteggio basso: Nun è Natale (medley, 42), Non saprai mai -
+    Live (35, versione diversa: scarto giusto), Meravigliosamente - Live (45),
+    A19 - Live (13), Te Ne Vai (35, canale Topic con 563 views).
+    IMPLEMENTATO (logica/youtube.py, _search_variants): se la ricerca da' 0
+    risultati (e anche il ripiego col solo titolo non da' nulla) si provano in
+    ordine "artista + titolo senza ultima parola", "artista + prima parola",
+    "artista + titolo senza ultima lettera"; ci si ferma alla prima il cui
+    vincitore, SENZA bonus primo risultato, ha punteggio >= 50 E titolo con
+    somiglianza (token_set_ratio) >= 65 col titolo cercato. Nel report compare
+    "ATTENZIONE: trovato con la ricerca di ripiego '...'". Prova finale su 45
+    canzoni che oggi funzionano: nessuna canzone sbagliata passata (i vincitori
+    "diversi" erano lo stesso brano ricaricato da un altro canale); sulle 11 di
+    Gianni Celeste: Famme fesse, Addo stive, Nunn'e' cchiu' ammore, Amori a luci
+    rosse, 'O spogliarello, E Cchiu' Me Piace, Pero' me faje muri, Che Sapute
+    Cumbina passano e sono giuste, Bella spagnola scartata (nessuna variante
+    giusta), Spogliate e More...more dipendono dalla giornata. Il falso
+    positivo "Che Bomba" cade (somiglianza 52 < 65).
+    Idea originale, provata prima di implementare: riprovare con
+    varianti. Provate SOLO ricerca, senza download, su 11 canzoni:
+      - "artista + prima parola del titolo": risultati nel 10/11, primo giusto 5
+      - "senza ultima parola": 8/11, giusto 4;  "senza ultima lettera": 6/11,
+        giusto 4;  "senza prima parola": 5/11;  "solo titolo": 4/11;
+        "due lettere scambiate" (storpiatura): quasi mai (2/11) -> scartata.
+      - "aggiungere Seamusica" funziona ma e' specifico di questo repertorio:
+        Giovanni ha detto di NON usarlo.
+    Giovanni ha chiesto: nelle ricerche di ripiego NIENTE bonus del primo
+    risultato (+20, SCORE_FIRST_RESULT_BONUS), deve passare solo cio' che e'
+    sicuro. Prova con il vero _score, senza bonus, durate dal txt, soglia 50
+    (3 varianti: artista+1a parola, senza ultima parola, senza ultima lettera):
+      - Passano e sono giuste: Famme fesse (112), Addo stivè (107), Nunn'e'
+        cchiu' ammore (105), Amori A luci Rosse (105), 'O spogliarello (109),
+        Bella spagnola (88), E Cchiu' Me Piace (110 con "senza ultima parola" o
+        "senza ultima lettera"), Però me faje murì (84, ma il video dura 251 s
+        contro 205 attesi: probabile versione video 2021, da controllare).
+      - Scartata correttamente: E Cchiu' Me Piace con "artista + 1a parola"
+        (28, vincitore sbagliato).
+      - FALSO POSITIVO: Che Sapute Cumbinà con "artista + 1a parola" vince
+        "Gianni Celeste - Che Bomba" con 59 (passa la soglia 50!). Con "senza
+        ultima parola" vince quella giusta (62). Quindi lo scoring da solo NON
+        basta come filtro nelle ricerche di ripiego.
+      - Nessun risultato con nessuna delle 3 varianti: Spogliate (funziona solo
+        "spogliate Seamusica"), More...more.
+    Ipotesi da verificare prima di implementare: nelle ricerche di ripiego
+    richiedere in piu' che il titolo cercato (normalizzato) sia contenuto nel
+    titolo del video. Su questi 11 casi separa bene ("Che Bomba" cade, tutti i
+    giusti restano), ma e' un campione piccolo. Ordine consigliato delle
+    varianti: "senza ultima parola", poi "artista + prima parola", poi "senza
+    ultima lettera". Poi rifare la prova su piu' canzoni (anche su canzoni che
+    oggi si scaricano bene, per vedere se il filtro le scarterebbe) e dire a
+    Giovanni com'e' andata PRIMA di implementare.
+    Per le 5 a punteggio basso: NON piegare lo scoring (regola di Giovanni).
+    Si potrebbe recuperare Meravigliosamente - Live e Te Ne Vai con un avviso
+    invece del blocco: decide lui.
+
+1.7 Altre cose rimaste aperte (2026-10-08)
+    - crea_programma.bat: provate entrambe le scelte (la 1 la ha provata
+      Giovanni, 2026-10-08).
+    - (FATTO) Riferimenti a esempi/lista_esempio.txt tolti da README,
+      scarica_da_txt.py e .gitignore.
+    - Lista di avanzamento condivisa (ui/progress_view.py): provata da Giovanni
+      con download veri ("funziona"); non guardato il pannello compatto da 285 px
+      con tante canzoni.
+    - (FATTO) Changelog #89: puntini, ripiego 0 risultati, ritocchi allo
+      scoring del 2026-10-08.
+
+
 ────────────────────────────────────────────────────────────────
 2. BUG NOTI
 ────────────────────────────────────────────────────────────────

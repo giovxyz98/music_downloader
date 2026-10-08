@@ -11,7 +11,8 @@ from .config import (
     SCORE_ARTIST_IN_TITLE, SCORE_TITLE_IN_TITLE, SCORE_ARTIST_IN_CHANNEL,
     SCORE_TOPIC_CHANNEL, SCORE_OFFICIAL_KEYWORD, SCORE_BAD_KEYWORD_PENALTY,
     SCORE_DURATION_EXACT, SCORE_DURATION_CLOSE, SCORE_DURATION_FAR_PENALTY,
-    SCORE_FUZZY_MULTIPLIER, SCORE_FIRST_RESULT_BONUS, SCORE_EXTRA_WORD_PENALTY,
+    SCORE_FUZZY_MULTIPLIER, SCORE_FIRST_RESULT_BONUS, SCORE_FIRST_RESULT_MIN_TITLE_MATCH,
+    SCORE_EXTRA_WORD_PENALTY,
     SCORE_ORIGINAL_ARTIST_MISSING_PENALTY, SCORE_MIN_DOWNLOAD,
     SCORE_LIMIT_MARGIN, LIMIT_MAX_DURATION_DIFF,
     SCORE_VIEWS_GAP_RATIO, SCORE_VIEWS_GAP_PENALTY,
@@ -26,6 +27,7 @@ class YouTubeSearcher:
     _BAD_KEYWORDS      = {"live", "karaoke", "instrumental", "remix", "cover",
                           "sped up", "slowed", "8d", "nightcore"}
     _OFFICIAL_KEYWORDS = {"official video", "official audio"}
+    _FEAT_MARKERS      = frozenset({"feat", "ft", "featuring"})
     _NOISE_WORDS       = frozenset({
         "official", "ufficiale", "video", "visual", "audio",
         "hd", "4k", "lyrics", "testo", "seamusica", "ft", "feat",
@@ -42,8 +44,20 @@ class YouTubeSearcher:
         return s
 
     @staticmethod
+    def _has_word(text: str, word: str) -> bool:
+        """True se `word` (anche piu' parole, es. "sped up") compare in `text`
+        come parola intera: "live" non e' dentro "olive", "topic" non e' dentro
+        "topical". Entrambi gia' normalizzati (solo lettere, cifre e spazi)."""
+        return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text) is not None
+
+    @staticmethod
     def _extra_words(v: str, tit_n: str, art_n: str) -> int:
-        words = set(v.split())
+        tokens = v.split()
+        for i, w in enumerate(tokens):
+            if w in YouTubeSearcher._FEAT_MARKERS:
+                tokens = tokens[:i] + tokens[i + 2:]  # la parola dopo "feat"/"ft" e' l'ospite: corretta, non sospetta
+                break
+        words = set(tokens)
         words -= YouTubeSearcher._NOISE_WORDS
         words = {w for w in words if not (w.isdigit() and len(w) == 4)}
         words -= set(tit_n.split())
@@ -118,7 +132,7 @@ class YouTubeSearcher:
         if art_n and art_n in ch:
             score += SCORE_ARTIST_IN_CHANNEL
             logger.debug(f"{p} artista {art_n!r} presente nel canale → +{SCORE_ARTIST_IN_CHANNEL} (tot={score})")
-        if "topic" in ch:
+        if YouTubeSearcher._has_word(ch, "topic"):
             if YouTubeSearcher._topic_is_artist(ch, art_n):
                 score += SCORE_TOPIC_CHANNEL
                 logger.debug(f"{p} canale 'Topic' dell'artista → +{SCORE_TOPIC_CHANNEL} (tot={score})")
@@ -129,9 +143,9 @@ class YouTubeSearcher:
                 score += SCORE_OFFICIAL_KEYWORD
                 logger.debug(f"{p} keyword ufficiale {k!r} nel titolo → +{SCORE_OFFICIAL_KEYWORD} (tot={score})")
         for k in YouTubeSearcher._BAD_KEYWORDS:
-            if k in tit_n:
+            if YouTubeSearcher._has_word(tit_n, k):
                 continue  # la parola e' nel titolo richiesto (es. "Mio caro - Live"): non e' un difetto
-            if k in v:
+            if YouTubeSearcher._has_word(v, k):
                 score -= SCORE_BAD_KEYWORD_PENALTY
                 logger.debug(f"{p} bad keyword {k!r} nel titolo → -{SCORE_BAD_KEYWORD_PENALTY} (tot={score})")
         if dur and duration:
@@ -175,6 +189,71 @@ class YouTubeSearcher:
         return score
 
     @staticmethod
+    def _rank(entries: list, art_n: str, tit_n: str, duration: int,
+              orig_art_n: str = "", tag: str = "", first_bonus: bool = True) -> list:
+        """Punteggio finale di ogni candidato (bonus primo risultato compreso),
+        ordinato dal migliore. Ritorna [(score, entry), ...]. Separato da search()
+        perche' dev/test_scoring_regressione.py lo usa su risultati salvati."""
+        max_same_artist_views = YouTubeSearcher._max_same_artist_views(entries, art_n, tit_n)
+        logger.debug(f"[YouTube]{tag} max views tra i candidati con l'artista {art_n!r} e il titolo {tit_n!r}: {max_same_artist_views}")
+        scored = []
+        for i, e in enumerate(entries):
+            base = YouTubeSearcher._score(e, art_n, tit_n, duration, orig_art_n, tag=tag, idx=i,
+                                          max_same_artist_views=max_same_artist_views)
+            if i == 0 and first_bonus:
+                match = (fuzz.token_set_ratio(tit_n, YouTubeSearcher._normalize(e.get("title", "")))
+                         if tit_n else 100)
+                if match >= SCORE_FIRST_RESULT_MIN_TITLE_MATCH:
+                    logger.debug(f"[Score]{tag} cand#{i + 1} bonus primo risultato yt-dlp → +{SCORE_FIRST_RESULT_BONUS} (tot={base + SCORE_FIRST_RESULT_BONUS})")
+                    base += SCORE_FIRST_RESULT_BONUS
+                else:
+                    logger.debug(f"[Score]{tag} cand#{i + 1} primo risultato ma titolo troppo diverso "
+                                 f"(somiglianza {match:.0f} < {SCORE_FIRST_RESULT_MIN_TITLE_MATCH}) → nessun bonus (tot={base})")
+            scored.append((base, e))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored
+
+    @staticmethod
+    def _variant_queries(artist: str, title: str) -> list:
+        """Query di ripiego, in ordine, quando YouTube da' 0 risultati per quella
+        esatta (instabile, causa ignota). Provate il 2026-10-08."""
+        words = title.split()
+        out = []
+        if len(words) > 1:
+            out.append(f"{artist} {' '.join(words[:-1])}")   # senza ultima parola
+        if words:
+            out.append(f"{artist} {words[0]}")               # artista + prima parola
+        if len(title) > 3:
+            out.append(f"{artist} {title[:-1]}")             # senza ultima lettera
+        return out
+
+    @staticmethod
+    def _search_variants(artist: str, title: str, art_n: str, tit_n: str, duration: int,
+                         orig_art_n: str, tag: str, ydl_opts: dict) -> tuple:
+        """Prova le query di ripiego una dopo l'altra e si ferma alla prima il cui
+        vincitore e' sicuro: SENZA bonus primo risultato (l'ordine di una ricerca
+        storpiata non vale nulla), punteggio >= soglia E titolo che somiglia almeno
+        SCORE_FIRST_RESULT_MIN_TITLE_MATCH a quello cercato (senza questo
+        "Gianni Celeste - Che Bomba" passava per "Che Sapute Cumbina").
+        Ritorna (entries, nota per il report) oppure ([], "")."""
+        for q in YouTubeSearcher._variant_queries(artist, title):
+            logger.warning(f"[YouTube]{tag} 0 risultati, riprovo con la variante '{q}'")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                results = ydl.extract_info(f"ytsearch{YOUTUBE_RESULTS}:{q}", download=False)
+            entries = [e for e in (results.get("entries") or []) if e]
+            if not entries:
+                logger.debug(f"[YouTube]{tag} variante '{q}': 0 risultati")
+                continue
+            score, best = YouTubeSearcher._rank(entries, art_n, tit_n, duration, orig_art_n, tag,
+                                                first_bonus=False)[0]
+            sim = fuzz.token_set_ratio(tit_n, YouTubeSearcher._normalize(best.get("title", "")))
+            logger.debug(f"[YouTube]{tag} variante '{q}': vincitore {score} (somiglianza titolo {sim:.0f}) "
+                         f"{best.get('title')!r}")
+            if score >= SCORE_MIN_DOWNLOAD and sim >= SCORE_FIRST_RESULT_MIN_TITLE_MATCH:
+                return entries, f"trovato con la ricerca di ripiego '{q}' (la ricerca esatta non dava risultati)"
+        return [], ""
+
+    @staticmethod
     def _limit_case(entry: dict, score: int, art_n: str, tit_n: str, duration: int) -> str:
         """Caso limite: punteggio poco sotto la soglia ma il video e' sul canale
         dell'artista stesso. Ritorna "" se il candidato NON e' accettabile,
@@ -186,7 +265,8 @@ class YouTubeSearcher:
         ch = YouTubeSearcher._normalize(entry.get("uploader", "") or entry.get("channel", ""))
         if art_n not in ch or art_n not in v or not tit_n or tit_n not in v:
             return ""
-        if any(k in v and k not in tit_n for k in YouTubeSearcher._BAD_KEYWORDS):
+        if any(YouTubeSearcher._has_word(v, k) and not YouTubeSearcher._has_word(tit_n, k)
+               for k in YouTubeSearcher._BAD_KEYWORDS):
             return ""
         dur = entry.get("duration") or 0
         if dur and duration and abs(dur - duration) > LIMIT_MAX_DURATION_DIFF:
@@ -240,6 +320,11 @@ class YouTubeSearcher:
                 logger.debug(f"[YouTube]{tag} fallback solo-titolo: {len(found)} risultati, "
                              f"{len(entries)} con l'artista")
                 raw_entries = entries
+            fallback_note = ""
+            if not entries and title and art_n:
+                entries, fallback_note = YouTubeSearcher._search_variants(
+                    artist, title, art_n, tit_n, duration, orig_art_n, tag, ydl_opts)
+                raw_entries = entries
             if len(entries) != len(raw_entries):
                 logger.debug(f"[YouTube]{tag} {len(raw_entries) - len(entries)} entries vuote/None scartate da yt-dlp")
             logger.debug(f"[YouTube]{tag} yt-dlp ha restituito {len(entries)} risultati grezzi (richiesti {YOUTUBE_RESULTS})")
@@ -247,17 +332,8 @@ class YouTubeSearcher:
                 logger.debug(f"[YouTube]{tag} Nessun risultato per: '{query}'")
                 why(f"YouTube non ha restituito nessun risultato per '{query}' (puo' essere temporaneo: riprova)")
                 return []
-            max_same_artist_views = YouTubeSearcher._max_same_artist_views(entries, art_n, tit_n)
-            logger.debug(f"[YouTube]{tag} max views tra i candidati con l'artista {art_n!r} e il titolo {tit_n!r}: {max_same_artist_views}")
-            scored = []
-            for i, e in enumerate(entries):
-                base = YouTubeSearcher._score(e, art_n, tit_n, duration, orig_art_n, tag=tag, idx=i,
-                                              max_same_artist_views=max_same_artist_views)
-                if i == 0:
-                    logger.debug(f"[Score]{tag} cand#{i + 1} bonus primo risultato yt-dlp → +{SCORE_FIRST_RESULT_BONUS} (tot={base + SCORE_FIRST_RESULT_BONUS})")
-                    base += SCORE_FIRST_RESULT_BONUS
-                scored.append((base, e))
-            scored.sort(key=lambda x: x[0], reverse=True)
+            scored = YouTubeSearcher._rank(entries, art_n, tit_n, duration, orig_art_n, tag,
+                                          first_bonus=not fallback_note)
             best_score = scored[0][0]
             if diagnostics is not None:
                 diagnostics["ranking"] = [
@@ -287,7 +363,7 @@ class YouTubeSearcher:
                         + YouTubeSearcher._normalize(top.get("uploader", "") or top.get("channel", "")))
             # Non si scarta (le versioni di Spotify e YouTube spesso differiscono, es. rifatte
             # o live): si segnala nel report cosi' si puo' controllare a mano.
-            doubts = []
+            doubts = [fallback_note] if fallback_note else []
             if duration and top_dur and abs(top_dur - duration) > SUSPECT_DURATION_DIFF:
                 doubts.append(f"durata video {top_dur}s, attesa {duration}s")
             if art_n and art_n not in top_text:

@@ -10,8 +10,8 @@ Da Python:
 
 Per ogni artista viene creata <destinazione>/<Artista>/ con una sottocartella
 per ogni album e i singoli direttamente nella cartella dell'artista. Nessuna
-API: titoli, album, anno e numeri traccia sono quelli scritti nel txt (vedi
-esempi/lista_esempio.txt per il formato)."""
+API: titoli, album, anno e numeri traccia sono quelli scritti nel txt (il
+formato e' descritto nel README)."""
 import sys
 import tkinter as tk
 from pathlib import Path

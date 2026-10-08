@@ -10,7 +10,6 @@
 !/docs/scoring/
 !/viewer/
 !/avvia/
-!/esempi/
 !/dev/
 
 # Includi file specifici in root
@@ -32,8 +31,8 @@
 !/avvia/crea_programma.bat
 !/avvia/installer.iss
 !/avvia/Disinstalla.bat
-!/esempi/lista_esempio.txt
 !/dev/*.py
+!/dev/fixture_scoring*.json
 !/viewer/prepara_log.py
 !/viewer/viewer.html
 !/viewer/viewer.js

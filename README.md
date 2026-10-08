@@ -51,7 +51,7 @@ pip install -r requirements.txt
 
 ## Download da file txt
 
-Scrivi un file di testo così (altro esempio in `esempi/lista_esempio.txt`):
+Scrivi un file di testo così:
 
 ```
 // Le righe che iniziano con // sono ignorate.
@@ -113,8 +113,7 @@ logica/               logica senza interfaccia: ricerca, scoring, download, coda
 ui/                   interfacce (CustomTkinter)
 viewer/               pagina per leggere il log
 avvia/                .bat per avviare e per compilare l'eseguibile
-esempi/               esempio di file txt
-dev/                  test_pipeline.py: prova della ricerca e dello scoring senza scaricare
+dev/                  test_pipeline.py (prova della ricerca e dello scoring senza scaricare) e test_scoring_regressione.py (controllo dello scoring su risultati salvati)
 dati/                 log e cache (creata al primo avvio)
 docs/                 note, changelog e documentazione dello scoring
 config.json           impostazioni (workers, qualità, soglie di scoring, LOG_LEVEL)

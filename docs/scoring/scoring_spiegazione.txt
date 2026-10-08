@@ -28,6 +28,14 @@ uno spazio: "m'appicceche" → "m appicceche").
 
 Se YouTube restituisce 0 risultati per la query completa, si riprova col solo
 titolo e si tengono solo i video che citano l'artista nel titolo o nel canale.
+Se anche cosi' non c'e' nulla (dal 2026-10-08) si provano delle varianti, in
+ordine, e ci si ferma alla prima che da' un vincitore sicuro:
+  1. artista + titolo senza l'ultima parola
+  2. artista + prima parola del titolo
+  3. artista + titolo senza l'ultima lettera
+Un vincitore e' sicuro se, SENZA il bonus primo risultato (regola 9), ha almeno
+50 punti E il suo titolo somiglia almeno 65 (token_set_ratio) a quello cercato.
+Nel report compare "ATTENZIONE: trovato con la ricerca di ripiego '...'".
 
 
 ────────────────────────────────────────────────────────────────
@@ -48,7 +56,8 @@ PUNTI IN PIÙ
   3. SE l'artista cercato è nel nome del canale
        ALLORA +15   [SCORE_ARTIST_IN_CHANNEL: 15]
        (nota: "giannivezzositv" NON contiene "gianni vezzosi" con lo spazio)
-  4. SE il nome del canale contiene "topic" E il nome prima di "- Topic" è
+  4. SE il nome del canale contiene la PAROLA "topic" (parola intera, non
+     "topical") E il nome prima di "- Topic" è
      l'artista cercato (contenuto nel nome o simile: somiglianza almeno 80)
        ALLORA +25   [SCORE_TOPIC_CHANNEL: 25]
        (canali auto-generati da YouTube. Dal 2026-10-07 il Topic di un ALTRO
@@ -67,17 +76,27 @@ PUNTI IN PIÙ
      del video (rapidfuzz token_sort_ratio, da 0 a 100)
        ALLORA + somiglianza x 0.3, arrotondato per difetto (max +30)
        [SCORE_FUZZY_MULTIPLIER: 0.3]
-  9. SE il video è il PRIMO risultato restituito da YouTube per la query
-       ALLORA +20   [SCORE_FIRST_RESULT_BONUS: 20]
-       (viene aggiunto dopo il calcolo di tutte le altre regole)
+  9. SE il video è il PRIMO risultato restituito da YouTube per la query E il
+     suo titolo somiglia almeno 65 al titolo cercato (rapidfuzz
+     token_set_ratio, 0-100, ignora l'ordine e le parole in piu')
+       ALLORA +15   [SCORE_FIRST_RESULT_BONUS: 15,
+                     SCORE_FIRST_RESULT_MIN_TITLE_MATCH: 65]
+       (dal 2026-10-08: senza la somiglianza minima, artista nel titolo 25 +
+        artista nel canale 15 + primo 15 = 55 faceva passare la soglia a una
+        canzone SBAGLIATA dello stesso artista, senza alcun match sul titolo)
+       (viene aggiunto dopo il calcolo di tutte le altre regole. Era 20 fino al
+        2026-10-08: l'ordine di YouTube e' influenzato da popolarita' e
+        personalizzazione, quindi pesa un po' meno)
 
 PUNTI IN MENO
 
- 10. PER OGNI parola "cattiva" presente nel titolo del video
+ 10. PER OGNI parola "cattiva" presente nel titolo del video COME PAROLA INTERA
      (live, karaoke, instrumental, remix, cover, sped up, slowed, 8d, nightcore)
        ALLORA -25 a testa   [SCORE_BAD_KEYWORD_PENALTY: 25]
        ECCEZIONE: se la parola è già nel titolo RICHIESTO (es. "Mio caro - Live")
        non si penalizza.
+       (dal 2026-10-08 "live" dentro "Olive" o "cover" dentro "Discovery" non
+        contano piu'; vale anche per il controllo del caso limite)
  11. SE la durata attesa è nota E la differenza di durata è maggiore di 60 s
        ALLORA -20   [SCORE_DURATION_FAR_PENALTY: 20]
        (tra 15 e 60 secondi non si dà né si toglie nulla; se la durata attesa o
@@ -140,6 +159,12 @@ non scatta.
 COME SI CALCOLANO LE PAROLE EXTRA
 ──────────────────────────────────
 Dal titolo YouTube normalizzato vengono tolte:
+  0. La UNICA parola che segue "feat", "ft" o "featuring" (dal 2026-10-08): e'
+     l'ospite, che il programma non conosce ma e' corretto. Una sola parola
+     apposta: un nome come "Geolier" e' coperto, mentre un cognome o altre
+     parole dopo la prima restano extra (-10 a testa), cosi' non si perdona
+     roba davvero estranea. Le parole cattive (regola 10) si controllano
+     comunque sul titolo intero.
   1. Parole di rumore comune:
        official, ufficiale, video, visual, audio, hd, 4k,
        lyrics, testo, seamusica, ft, feat, featuring,
@@ -149,8 +174,13 @@ Dal titolo YouTube normalizzato vengono tolte:
   4. Tutte le parole del nome artista
   5. Parole di un solo carattere
 
-Quello che rimane sono parole "sospette" — ogni parola costa -10. Gli altri
-artisti di un feat. (es. "Max Scaletta" in "Amo solo lei") contano come extra.
+Quello che rimane sono parole "sospette" — ogni parola costa -10. La prima
+parola dopo "feat"/"ft" non conta (un ospite con nome e cognome paga comunque
+il cognome); se invece il titolo li elenca con "&" o
+con la virgola (es. "Artista A & Artista B") gli altri nomi restano extra,
+perche' il programma conosce un solo artista per traccia (Deezer non da' la
+lista completa nelle tracce di un album). Nota: l'Esempio 1 qui sotto e'
+semplificato.
 
 Esempio 1 (nessuna penalità):
   Titolo YouTube : "Massimo & Gianni Celeste - Vite Perdute - Official Seamusica"
@@ -267,7 +297,8 @@ Valori attuali:
   SCORE_DURATION_CLOSE                 = 10
   SCORE_DURATION_FAR_PENALTY           = 20
   SCORE_FUZZY_MULTIPLIER               = 0.3
-  SCORE_FIRST_RESULT_BONUS             = 20
+  SCORE_FIRST_RESULT_BONUS             = 15
+  SCORE_FIRST_RESULT_MIN_TITLE_MATCH   = 65
   SCORE_EXTRA_WORD_PENALTY             = 10
   SCORE_ORIGINAL_ARTIST_MISSING_PENALTY = 35
   SCORE_VIEWS_GAP_RATIO                = 20
@@ -291,11 +322,31 @@ LIMITI NOTI
     85 contro 73). Ora il bonus vale solo se il nome prima di "- Topic" è
     l'artista cercato; i due casi scelgono l'upload giusto (100 contro 87 e
     73 contro 60) e su 190 altre canzoni il vincitore non cambia.
-  - Le parole "cattive" e "topic" sono cercate come TESTO dentro il titolo/canale,
-    non come parola intera (verificato 2026-10-07): "live" dentro "Olive" e
-    "cover" dentro "Discovery" costano -25, un canale "topical" prende +25 come
-    "topic". Non misurato quanto capita nei risultati reali.
-  - Gli altri artisti di un feat. costano -10 a testa come "parole extra".
+  - (RISOLTO 2026-10-08) Le parole "cattive" e "topic" erano cercate come testo
+    dentro il titolo/canale ("live" in "Olive", "cover" in "Discovery" = -25,
+    "topical" = +25 come "topic"). Ora sono parole intere. Su 144 ricerche
+    reali (Geolier, Celeste, Vezzosi, Nino D'Angelo, Rocco Hunt, Liberato) il
+    vincitore non cambia in nessuna: il bug era reale ma raro.
+  - La prima parola dopo "feat"/"ft" non costa piu' nulla (un ospite con nome
+    e cognome paga il cognome); gli altri artisti
+    elencati con "&" o virgola costano ancora -10 a testa (manca la lista
+    completa degli artisti: Deezer la da' solo per singola traccia).
+  - Il titolo cercato e' solo un bonus (+30 piu' il fuzzy), non una condizione:
+    un canale giusto con la canzone sbagliata puo' arrivare a 50 (a 40-49 con
+    il caso limite). Provata una penalita' -30 per titolo mancante e scartata
+    (perde "Canzona mia" e "Attimi, pt. 2 - Live" per grafie diverse), vedi
+    problemi_scoring.txt #7. Dal 2026-10-08 il solo bonus primo risultato e'
+    condizionato alla somiglianza del titolo (regola 9), che chiude il caso
+    "Che Bomba" (somiglianza 52, sbagliata) senza toccare i giusti (81-100).
+    Resta possibile che passi una canzone sbagliata con artista nel titolo e
+    nel canale + durata esatta.
+
+TEST DI REGRESSIONE
+  dev/test_scoring_regressione.py confronta il vincitore di ~135 ricerche reali
+  salvate (dev/fixture_scoring.json, prese il 2026-10-08, nessuna rete) con
+  quelli attesi (dev/fixture_scoring_attesi.json). Si lancia dopo ogni ritocco
+  allo scoring; elenca i cambiamenti da guardare a mano; --aggiorna accetta i
+  nuovi vincitori.
   - I risultati di YouTube cambiano nel tempo: la stessa ricerca ripetuta a
     distanza può dare candidati diversi.
   - Titoli che su YouTube si chiamano diversamente (es. "A parte te" → "Attimi")
