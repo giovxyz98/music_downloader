@@ -61,6 +61,10 @@ _CFG_DEFAULTS: dict = {
     "PREFERRED_QUALITY":          "320",
     "SOCKET_TIMEOUT":             30,
     "RETRIES":                    3,
+    # HTTP 403 di YouTube su un download: di solito temporaneo, si riprova lo
+    # stesso link prima di passare al candidato successivo.
+    "HTTP_403_RETRIES":           2,
+    "HTTP_403_RETRY_PAUSE":       4,
     "YOUTUBE_RESULTS":            5,
     "FILENAME_MAX_LENGTH":        180,
     "MAX_SEARCHES":               50,
@@ -130,6 +134,8 @@ MAX_WORKERS                = _cfg["MAX_WORKERS"]
 PREFERRED_QUALITY          = _cfg["PREFERRED_QUALITY"]
 SOCKET_TIMEOUT             = _cfg["SOCKET_TIMEOUT"]
 RETRIES                    = _cfg["RETRIES"]
+HTTP_403_RETRIES           = _cfg["HTTP_403_RETRIES"]
+HTTP_403_RETRY_PAUSE       = _cfg["HTTP_403_RETRY_PAUSE"]
 YOUTUBE_RESULTS            = _cfg["YOUTUBE_RESULTS"]
 FILENAME_MAX_LENGTH        = _cfg["FILENAME_MAX_LENGTH"]
 MAX_SEARCHES               = _cfg["MAX_SEARCHES"]

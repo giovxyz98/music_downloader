@@ -116,8 +116,13 @@ PUNTI IN MENO
 DECISIONE FINALE (dopo aver ordinato i candidati per punteggio)
 
  15. SE il punteggio migliore è almeno 50   [SCORE_MIN_DOWNLOAD: 50]
-       ALLORA si scarica il migliore. Se il suo download fallisce, si prova il
-       secondo, e così via in ordine di punteggio (nel log: "OK*").
+       ALLORA si scarica il migliore. Se il suo download fallisce con HTTP 403
+       (di solito temporaneo) si riprova lo stesso link HTTP_403_RETRIES (2)
+       volte, con pausa di 4 e 8 secondi [HTTP_403_RETRY_PAUSE: 4]. Se fallisce
+       ancora (o con un altro errore) si passa al candidato successivo, ma
+       SOLO se anche lui ha almeno 50 punti E un titolo con somiglianza almeno
+       65 (stessi controlli della regola 9); gli altri non si scaricano mai
+       (nel log: "OK*").
  16. SE il migliore ha tra 40 e 49 punti
      [SCORE_MIN_DOWNLOAD - SCORE_LIMIT_MARGIN; SCORE_LIMIT_MARGIN: 10]
      E TUTTE queste condizioni valgono:

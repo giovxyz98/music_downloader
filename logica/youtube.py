@@ -382,7 +382,20 @@ class YouTubeSearcher:
                     f"channel_id={e.get('channel_id', '?')}  id={e.get('id', '?')}  "
                     f"titolo='{e.get('title', '?')[:60]}'"
                 )
-            urls = [e["url"] for _, e in scored]
+            # Il vincitore e' gia' stato accettato (soglia o caso limite). I candidati
+            # di riserva, usati se il suo download fallisce (es. HTTP 403), devono
+            # superare gli stessi controlli: punteggio minimo E titolo simile, altrimenti
+            # si scaricherebbe un'altra canzone ("E Cchiu' Me Piace" -> "Nu m'annammoro
+            # cchiu'", 51 punti).
+            urls = [scored[0][1]["url"]]
+            for s, e in scored[1:]:
+                sim = (fuzz.token_set_ratio(tit_n, YouTubeSearcher._normalize(e.get("title", "")))
+                       if tit_n else 100)
+                if s >= SCORE_MIN_DOWNLOAD and sim >= SCORE_FIRST_RESULT_MIN_TITLE_MATCH:
+                    urls.append(e["url"])
+                else:
+                    logger.debug(f"[YouTube]{tag} candidato di riserva escluso: {e.get('title')!r} "
+                                 f"(punteggio {s}, somiglianza titolo {sim:.0f})")
             logger.debug(f"[YouTube]{tag} FINE RICERCA: {len(urls)} URL ordinati, scelto: {urls[0] if urls else 'nessuno'}")
             return urls
         except Exception as e:

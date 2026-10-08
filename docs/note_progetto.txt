@@ -18,14 +18,17 @@ Progetto: Music Downloader
     installer (vedi changelog #87 (m)), poi cancella build/, dist/ e il .spec.
     Da exe log, cache e config stanno in %APPDATA%\MusicDownloader.
     Verificato il 2026-10-08: la scelta 2 arriva in fondo (PyInstaller, Inno Setup,
-    pulizia) e produce installer\MusicDownloader-Setup.exe. NON provati: la scelta 1,
-    che l'exe parta e scarichi, la procedura grafica dell'installer. Da provare
+    pulizia) e produce installer\MusicDownloader-Setup.exe. La scelta 1 l'ha provata
+    Giovanni (2026-10-08). NON provati: che l'exe parta e scarichi, la procedura
+    grafica dell'installer. Da provare
     prima di darlo a qualcuno. L'installer va rigenerato a ogni nuova versione.
     (Era il punto "Creazione eseguibile standalone" di "operazioni fine sviluppi".)
 
 1.2 Qualche test automatico (opzionale)
-    Non esiste una test suite: in dev/ c'è solo test_pipeline.py, un dry-run
-    manuale dello scoring, non un test. Dove avrebbero più senso, perché lì è
+    Non esiste una test suite. In dev/ ci sono test_pipeline.py (dry-run
+    manuale, non un test) e test_scoring_regressione.py (dal 2026-10-08: controlla
+    i vincitori dello scoring su 135 ricerche reali salvate, senza rete). Per il
+    resto dove avrebbero più senso, perché lì è
     stato trovato un bug vero il 2026-10-07:
       - txt_importer.py (parser del formato del txt)
       - ReportWriter in txt_download.py (ripristino di link e note alla ripresa)
@@ -40,8 +43,8 @@ Progetto: Music Downloader
     canzoni di Geolier con ripresa (log a blocchi, link nel report).
     Non fatto: il download lungo da 2000+ canzoni dal vivo con il nuovo log; il
     Treeview a occhio con il tema scuro (colori, intestazioni, scrollbar); il
-    caso "OK*" (fallback su un candidato di riserva) mai visto dal vivo nel
-    log. I file scaricati non sono stati riascoltati: le canzoni con
+    caso "OK*" (fallback su un candidato di riserva): visto dal vivo l'8
+    ottobre (7 volte, dopo HTTP 403), vedi problemi_scoring.txt #10. I file scaricati non sono stati riascoltati: le canzoni con
     "ATTENZIONE" nel report (durata distante o artista assente) vanno
     controllate a mano. Dettagli in docs/scoring/verifica_scoring_2026-10-05.txt.
 
@@ -149,6 +152,12 @@ Progetto: Music Downloader
     invece del blocco: decide lui.
 
 1.7 Altre cose rimaste aperte (2026-10-08)
+    - Run di Gianni Celeste dopo i ritocchi (2026-10-08): 1111/1118, 7 fallite
+      (medley "Nun e' Natale / Daniela / ..." da 18:37, 3 Live, Te Ne Vai,
+      Spogliate nell'album Collezione, More...more). Il ripiego a 0 risultati
+      ha recuperato 10 canzoni. Trovato il bug dei candidati di riserva
+      (problemi_scoring.txt #10): il file "E Cchiu' Me Piace.mp3" del run
+      contiene "Nu m'annammoro cchiu'", da cancellare e riscaricare.
     - crea_programma.bat: provate entrambe le scelte (la 1 la ha provata
       Giovanni, 2026-10-08).
     - (FATTO) Riferimenti a esempi/lista_esempio.txt tolti da README,

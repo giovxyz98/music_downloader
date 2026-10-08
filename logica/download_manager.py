@@ -6,7 +6,7 @@ from queue import Queue
 from typing import Callable, List, Optional
 
 from .cache import CacheManager
-from .config import logger
+from .config import logger, HTTP_403_RETRIES, HTTP_403_RETRY_PAUSE
 from .downloader import AudioDownloader, tag_file, check_mp3, mp3_bitrate_kbps
 from .text_utils import sanitize_filename
 from .models import QueueItem
@@ -211,8 +211,7 @@ class DownloadManager:
         for i, url in enumerate(urls):
             try:
                 logger.debug(f"[Download]{tag} Tentativo {i+1}/{len(urls)}: {url}")
-                filepath = AudioDownloader.download(url, dest, filename=filename,
-                                                    progress_callback=progress_cb, tag=tag)
+                filepath = self._download_retry_403(url, dest, filename, progress_cb, tag)
                 if not filepath or not Path(filepath).exists():
                     raise RuntimeError("download terminato ma il file non e' nella cartella attesa")
                 logger.debug(f"[Download]{tag} File scaricato: {filepath}, applico i tag ID3")
@@ -240,6 +239,22 @@ class DownloadManager:
         item.result_error = " || ".join(errors)
         self._log_block(item, tag, meta, f"FALLITA: tutti i {len(urls)} link hanno dato errore", failed)
         return False, item.label
+
+    @staticmethod
+    def _download_retry_403(url: str, dest: str, filename: str, progress_cb, tag: str):
+        """Come AudioDownloader.download, ma su HTTP 403 (di solito temporaneo)
+        riprova lo stesso link HTTP_403_RETRIES volte, con pausa crescente."""
+        for attempt in range(HTTP_403_RETRIES + 1):
+            try:
+                return AudioDownloader.download(url, dest, filename=filename,
+                                                progress_callback=progress_cb, tag=tag)
+            except Exception as e:
+                if "HTTP Error 403" not in str(e) or attempt == HTTP_403_RETRIES:
+                    raise
+                pause = HTTP_403_RETRY_PAUSE * (attempt + 1)
+                logger.warning(f"[Download]{tag} HTTP 403 su {url}, riprovo tra {pause}s "
+                               f"({attempt + 1}/{HTTP_403_RETRIES})")
+                time.sleep(pause)
 
     # ── Batch (coda intera) ──────────────────────────────────────
 
