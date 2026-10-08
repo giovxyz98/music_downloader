@@ -213,6 +213,8 @@ class DownloadManager:
                 logger.debug(f"[Download]{tag} Tentativo {i+1}/{len(urls)}: {url}")
                 filepath = AudioDownloader.download(url, dest, filename=filename,
                                                     progress_callback=progress_cb, tag=tag)
+                if not filepath or not Path(filepath).exists():
+                    raise RuntimeError("download terminato ma il file non e' nella cartella attesa")
                 logger.debug(f"[Download]{tag} File scaricato: {filepath}, applico i tag ID3")
                 tag_file(filepath, meta, tag=tag)
                 item.result_url, item.result_status = url, "ok"

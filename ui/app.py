@@ -22,7 +22,7 @@ from logica.download_manager import DownloadManager
 from logica.models import Artist, Album, Track, QueueItem
 from logica.queue_manager import QueueManager
 from logica.search_controller import SearchController
-from logica.text_utils import sanitize_filename
+from logica.text_utils import sanitize_folder_name
 from logica.txt_download import describe_failure
 from .progress_view import ProgressView
 from .widgets import scrolled_tree
@@ -922,7 +922,7 @@ class MusicDownloaderApp:
                     self.root.after(0, lambda a=album, e=e: messagebox.showerror(
                         "Errore", f"Impossibile caricare '{a.nome}': {e}"))
                     return
-                album_folder = str(Path(destination) / sanitize_filename(album.nome))
+                album_folder = str(Path(destination) / sanitize_folder_name(album.nome))
                 Path(album_folder).mkdir(parents=True, exist_ok=True)
                 for track in tracks:
                     queue.append(QueueItem(
@@ -951,7 +951,7 @@ class MusicDownloaderApp:
                     "Errore", f"Impossibile caricare le tracce: {e}"))
                 return
 
-            album_folder = Path(destination) / sanitize_filename(album.nome)
+            album_folder = Path(destination) / sanitize_folder_name(album.nome)
             album_folder.mkdir(parents=True, exist_ok=True)
 
             queue = [

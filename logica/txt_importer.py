@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from .config import logger
 from .models import QueueItem
-from .text_utils import sanitize_filename
+from .text_utils import sanitize_filename, sanitize_folder_name
 
 
 @dataclass
@@ -144,11 +144,11 @@ def _primary_artist(track: TrackRequest, default: str) -> str:
 def build_plan(req: ArtistRequest, root: Path) -> ArtistPlan:
     """Trasforma le richieste del txt in un piano di download. Nessuna rete,
     nessuna dipendenza da tkinter: i metadati sono quelli scritti nel txt."""
-    folder = root / sanitize_filename(req.name)
+    folder = root / sanitize_folder_name(req.name)
     plan = ArtistPlan(artist_name=req.name, folder=folder, ignored=req.ignored)
 
     for album in req.albums:
-        album_folder = folder / sanitize_filename(album.title)
+        album_folder = folder / sanitize_folder_name(album.title)
         total = len(album.tracks)
         for i, track in enumerate(album.tracks, 1):
             plan.queue.append(_make_item(
