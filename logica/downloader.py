@@ -122,7 +122,7 @@ class AudioDownloader:
             ydl.download([url])
 
         if safe:
-            matches = glob.glob(str(Path(destination) / f"{safe}.*"))
+            matches = glob.glob(glob.escape(str(Path(destination) / safe)) + ".*")  # escape: [ ] ? * nei titoli
             logger.debug(f"[yt-dlp]{tag} glob '{safe}.*' → {matches}")
             mp3 = [m for m in matches if m.endswith(".mp3")]
             result = mp3[0] if mp3 else (matches[0] if matches else None)

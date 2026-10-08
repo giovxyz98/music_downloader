@@ -20,6 +20,47 @@ def make_manager() -> DownloadManager:
 REPORT_NAME = "report_download.txt"
 
 
+_SECTION_SEP = "\n\n" + "=" * 60 + "\n"
+
+
+def _prune_old_sections(old_report: str, keys: set) -> str:
+    """Toglie dalle sezioni dei lanci precedenti le voci (riga della canzone +
+    righe rientrate sotto) delle canzoni in `keys`, poi le intestazioni di album
+    rimaste vuote e le sezioni senza piu' voci. Le voci di canzoni che non sono
+    nella lista di questo lancio restano."""
+    kept_sections = []
+    for section in old_report.split(_SECTION_SEP):
+        out, entries = [], 0
+        skipping = False
+        for line in section.splitlines():
+            if line.startswith(" "):               # righe di dettaglio della voce precedente
+                if not skipping:
+                    out.append(line)
+                continue
+            skipping = False
+            if " | " in line and not line.startswith(("#", "[", "!")):
+                key = line.split(" | ")[0] + " | " + line.split(" | ")[1]
+                if key in keys:
+                    skipping = True
+                    continue
+                entries += 1
+            out.append(line)
+        if not entries:
+            continue
+        # intestazioni "[Album]/[Singoli]" senza voci sotto
+        cleaned = []
+        for i, line in enumerate(out):
+            if line.startswith("["):
+                nxt = next((l for l in out[i + 1:] if l.strip()), "")
+                if not nxt or nxt.startswith("["):
+                    continue
+            if not line.strip() and cleaned and not cleaned[-1].strip():
+                continue                            # niente righe vuote doppie
+            cleaned.append(line)
+        kept_sections.append("\n".join(cleaned).strip("\n"))
+    return _SECTION_SEP.join(kept_sections)
+
+
 class ReportWriter:
     """Report dell'artista, riscritto dopo ogni canzone completata (cosi' resta
     valido anche se il programma viene chiuso a meta'). La sezione di questo
@@ -32,12 +73,16 @@ class ReportWriter:
         self._lock = threading.Lock()
         self._stamp = f"{datetime.now():%Y-%m-%d %H:%M}"
         prefix = ""
+        old_report = ""
         if self.path.exists():
-            prefix = self.path.read_text(encoding="utf-8")
+            old_report = self.path.read_text(encoding="utf-8")
+            # ripulito dalle voci delle canzoni di questo lancio: ne avranno una
+            # nuova nella sezione di adesso (errori vecchi gia' risolti compresi)
+            prefix = _prune_old_sections(old_report, {_item_key(i) for i in plan.queue})
             if prefix.strip():
-                prefix = prefix.rstrip("\n") + "\n\n" + "=" * 60 + "\n"
+                prefix = prefix.rstrip("\n") + _SECTION_SEP
         self._prefix = prefix
-        self._restore_links(prefix)
+        self._restore_links(old_report)  # dal testo originale, non da quello ripulito
 
     def _restore_links(self, old_report: str) -> None:
         """Le canzoni gia' su disco vengono saltate al ripristino: il loro link

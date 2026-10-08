@@ -152,6 +152,19 @@ Progetto: Music Downloader
     invece del blocco: decide lui.
 
 1.7 Altre cose rimaste aperte (2026-10-08)
+    - Report del txt ripulito (2026-10-08): all'inizio di un lancio le sezioni dei
+      lanci precedenti perdono le voci delle canzoni presenti nella lista di
+      questo lancio (ne hanno una nuova nella sezione attuale); restano solo le
+      voci di canzoni non piu' in lista, e le sezioni vuote spariscono. Il
+      ripristino di link/titolo/note legge il testo ORIGINALE prima della pulizia.
+      Prima ogni lancio lasciava la sua sezione intera con i vecchi errori (108
+      "motivo:" in 3 sezioni nel report di Geolier). Provato su una copia del
+      report e su un report finto, non ancora con un lancio vero.
+    - Bug trovato col controllo dei titoli di Geolier: i titoli con [ ] (es.
+      "ORO E DIAMANTI (mane e mane 2.0) [feat. ...]") facevano fallire la
+      ricerca del file scaricato (glob); corretto con glob.escape in
+      downloader.py. Il file scaricato in quel lancio non ha tag ID3: va
+      cancellato e riscaricato.
     - Run di Gianni Celeste dopo i ritocchi (2026-10-08): 1111/1118, 7 fallite
       (medley "Nun e' Natale / Daniela / ..." da 18:37, 3 Live, Te Ne Vai,
       Spogliate nell'album Collezione, More...more). Il ripiego a 0 risultati
