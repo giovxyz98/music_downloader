@@ -78,7 +78,8 @@ PUNTI IN PIÙ
        [SCORE_FUZZY_MULTIPLIER: 0.3]
   9. SE il video è il PRIMO risultato restituito da YouTube per la query E il
      suo titolo somiglia almeno 65 al titolo cercato (rapidfuzz
-     token_set_ratio, 0-100, ignora l'ordine e le parole in piu')
+     token_set_ratio, 0-100, ignora l'ordine e le parole in piu'; il confronto
+     esclude la parte dopo "feat"/"ft" in entrambi i titoli, _title_similarity)
        ALLORA +15   [SCORE_FIRST_RESULT_BONUS: 15,
                      SCORE_FIRST_RESULT_MIN_TITLE_MATCH: 65]
        (dal 2026-10-08: senza la somiglianza minima, artista nel titolo 25 +

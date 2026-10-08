@@ -44,6 +44,25 @@ class YouTubeSearcher:
         return s
 
     @staticmethod
+    def _title_similarity(tit_n: str, video_title: str) -> float:
+        """Somiglianza 0-100 tra il titolo cercato e il titolo del video (normalizzato
+        qui), ignorando le parole e le parti dopo "feat"/"ft": i video spesso
+        scrivono gli ospiti diversamente o ne omettono qualcuno ("MONDAY (feat. Shiva
+        & Michelangelo)" contro "MONDAY ft. Shiva": 61 con il titolo intero, 100
+        senza feat). Usata dal bonus primo risultato, dal ripiego a 0 risultati e
+        dai candidati di riserva."""
+        if not tit_n:
+            return 100
+        def core(text: str) -> str:
+            tokens = text.split()
+            for i, w in enumerate(tokens):
+                if w in YouTubeSearcher._FEAT_MARKERS:
+                    return " ".join(tokens[:i])
+            return text
+        v = YouTubeSearcher._normalize(video_title)
+        return fuzz.token_set_ratio(core(tit_n) or tit_n, core(v) or v)
+
+    @staticmethod
     def _has_word(text: str, word: str) -> bool:
         """True se `word` (anche piu' parole, es. "sped up") compare in `text`
         come parola intera: "live" non e' dentro "olive", "topic" non e' dentro
@@ -201,8 +220,7 @@ class YouTubeSearcher:
             base = YouTubeSearcher._score(e, art_n, tit_n, duration, orig_art_n, tag=tag, idx=i,
                                           max_same_artist_views=max_same_artist_views)
             if i == 0 and first_bonus:
-                match = (fuzz.token_set_ratio(tit_n, YouTubeSearcher._normalize(e.get("title", "")))
-                         if tit_n else 100)
+                match = YouTubeSearcher._title_similarity(tit_n, e.get("title", ""))
                 if match >= SCORE_FIRST_RESULT_MIN_TITLE_MATCH:
                     logger.debug(f"[Score]{tag} cand#{i + 1} bonus primo risultato yt-dlp → +{SCORE_FIRST_RESULT_BONUS} (tot={base + SCORE_FIRST_RESULT_BONUS})")
                     base += SCORE_FIRST_RESULT_BONUS
@@ -246,7 +264,7 @@ class YouTubeSearcher:
                 continue
             score, best = YouTubeSearcher._rank(entries, art_n, tit_n, duration, orig_art_n, tag,
                                                 first_bonus=False)[0]
-            sim = fuzz.token_set_ratio(tit_n, YouTubeSearcher._normalize(best.get("title", "")))
+            sim = YouTubeSearcher._title_similarity(tit_n, best.get("title", ""))
             logger.debug(f"[YouTube]{tag} variante '{q}': vincitore {score} (somiglianza titolo {sim:.0f}) "
                          f"{best.get('title')!r}")
             if score >= SCORE_MIN_DOWNLOAD and sim >= SCORE_FIRST_RESULT_MIN_TITLE_MATCH:
@@ -389,8 +407,7 @@ class YouTubeSearcher:
             # cchiu'", 51 punti).
             urls = [scored[0][1]["url"]]
             for s, e in scored[1:]:
-                sim = (fuzz.token_set_ratio(tit_n, YouTubeSearcher._normalize(e.get("title", "")))
-                       if tit_n else 100)
+                sim = YouTubeSearcher._title_similarity(tit_n, e.get("title", ""))
                 if s >= SCORE_MIN_DOWNLOAD and sim >= SCORE_FIRST_RESULT_MIN_TITLE_MATCH:
                     urls.append(e["url"])
                 else:

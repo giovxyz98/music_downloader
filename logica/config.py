@@ -65,6 +65,14 @@ _CFG_DEFAULTS: dict = {
     # stesso link prima di passare al candidato successivo.
     "HTTP_403_RETRIES":           2,
     "HTTP_403_RETRY_PAUSE":       4,
+    # Anti-bot di YouTube: dopo troppi download ravvicinati risponde "Sign in to
+    # confirm you're not a bot" a TUTTI i download. Pausa tra un download e l'altro
+    # per ogni worker, e se scatta il blocco si aspetta BOT_BLOCK_PAUSE secondi (tutti
+    # i worker insieme) e si riprova; dopo BOT_BLOCK_MAX_PAUSES attese di fila senza
+    # nessun download riuscito il run si interrompe (si riprende rilanciandolo).
+    "DOWNLOAD_PAUSE":             2,
+    "BOT_BLOCK_PAUSE":            600,
+    "BOT_BLOCK_MAX_PAUSES":       3,
     "YOUTUBE_RESULTS":            5,
     "FILENAME_MAX_LENGTH":        180,
     "MAX_SEARCHES":               50,
@@ -136,6 +144,9 @@ SOCKET_TIMEOUT             = _cfg["SOCKET_TIMEOUT"]
 RETRIES                    = _cfg["RETRIES"]
 HTTP_403_RETRIES           = _cfg["HTTP_403_RETRIES"]
 HTTP_403_RETRY_PAUSE       = _cfg["HTTP_403_RETRY_PAUSE"]
+DOWNLOAD_PAUSE             = _cfg["DOWNLOAD_PAUSE"]
+BOT_BLOCK_PAUSE            = _cfg["BOT_BLOCK_PAUSE"]
+BOT_BLOCK_MAX_PAUSES       = _cfg["BOT_BLOCK_MAX_PAUSES"]
 YOUTUBE_RESULTS            = _cfg["YOUTUBE_RESULTS"]
 FILENAME_MAX_LENGTH        = _cfg["FILENAME_MAX_LENGTH"]
 MAX_SEARCHES               = _cfg["MAX_SEARCHES"]

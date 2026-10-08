@@ -6,7 +6,8 @@ from queue import Queue
 from typing import Callable, List, Optional
 
 from .cache import CacheManager
-from .config import logger, HTTP_403_RETRIES, HTTP_403_RETRY_PAUSE
+from .config import (logger, HTTP_403_RETRIES, HTTP_403_RETRY_PAUSE,
+                     DOWNLOAD_PAUSE, BOT_BLOCK_PAUSE, BOT_BLOCK_MAX_PAUSES)
 from .downloader import AudioDownloader, tag_file, check_mp3, mp3_bitrate_kbps
 from .text_utils import sanitize_filename
 from .models import QueueItem
@@ -35,6 +36,9 @@ class DownloadManager:
         self._yt_info_cache:   dict = {}   # query -> {url: {"title", "channel"}}, accanto a _yt_url_cache
 
         self.cancel_event = threading.Event()
+        self._block_lock    = threading.Lock()
+        self._blocked_until = 0.0   # time.monotonic() fino a cui YouTube ci ha bloccati (anti-bot)
+        self._bot_strikes   = 0     # blocchi di fila senza nessun download riuscito
 
     # ── Metadati album (genere, numero tracce) ──────────────────
 
@@ -241,19 +245,66 @@ class DownloadManager:
         return False, item.label
 
     @staticmethod
-    def _download_retry_403(url: str, dest: str, filename: str, progress_cb, tag: str):
-        """Come AudioDownloader.download, ma su HTTP 403 (di solito temporaneo)
-        riprova lo stesso link HTTP_403_RETRIES volte, con pausa crescente."""
-        for attempt in range(HTTP_403_RETRIES + 1):
+    def _is_bot_block(msg: str) -> bool:
+        return "not a bot" in msg or "Sign in to confirm" in msg
+
+    def _wait_if_blocked(self, tag: str) -> None:
+        """Se YouTube ci ha bloccati (anti-bot) aspetta, tutti i worker insieme,
+        controllando ogni secondo se il run e' stato annullato."""
+        while not self.cancel_event.is_set():
+            with self._block_lock:
+                left = self._blocked_until - time.monotonic()
+            if left <= 0:
+                return
+            time.sleep(min(1.0, left))
+
+    def _start_block(self, tag: str) -> bool:
+        """Registra un blocco anti-bot (una sola volta se piu' worker lo vedono
+        insieme). Ritorna False se i blocchi di fila sono troppi: run interrotto."""
+        with self._block_lock:
+            now = time.monotonic()
+            if now < self._blocked_until:
+                return True               # un altro worker lo ha gia' registrato
+            self._bot_strikes += 1
+            if self._bot_strikes > BOT_BLOCK_MAX_PAUSES:
+                logger.error(f"[Download]{tag} YouTube blocca ancora i download dopo {BOT_BLOCK_MAX_PAUSES} "
+                             f"attese da {BOT_BLOCK_PAUSE}s: run interrotto. Riprova piu' tardi: "
+                             f"le canzoni gia' scaricate vengono saltate.")
+                return False
+            self._blocked_until = now + BOT_BLOCK_PAUSE
+            logger.warning(f"[Download]{tag} YouTube ha bloccato i download (\"not a bot\"): pausa di "
+                           f"{BOT_BLOCK_PAUSE}s per tutti i worker (attesa {self._bot_strikes}/{BOT_BLOCK_MAX_PAUSES})")
+            return True
+
+    def _download_retry_403(self, url: str, dest: str, filename: str, progress_cb, tag: str):
+        """Come AudioDownloader.download, con tre protezioni: pausa di DOWNLOAD_PAUSE
+        s prima di ogni download, riprova lo stesso link su HTTP 403 (di solito
+        temporaneo) e attesa condivisa se YouTube risponde con il blocco anti-bot."""
+        retries403 = 0
+        while True:
+            self._wait_if_blocked(tag)
+            if self.cancel_event.is_set():
+                raise RuntimeError("download annullato")
+            time.sleep(DOWNLOAD_PAUSE)
             try:
-                return AudioDownloader.download(url, dest, filename=filename,
-                                                progress_callback=progress_cb, tag=tag)
+                result = AudioDownloader.download(url, dest, filename=filename,
+                                                  progress_callback=progress_cb, tag=tag)
+                with self._block_lock:
+                    self._bot_strikes = 0
+                return result
             except Exception as e:
-                if "HTTP Error 403" not in str(e) or attempt == HTTP_403_RETRIES:
+                msg = str(e)
+                if self._is_bot_block(msg):
+                    if not self._start_block(tag):
+                        self.cancel_event.set()
+                        raise
+                    continue                      # attende e riprova lo stesso link
+                if "HTTP Error 403" not in msg or retries403 >= HTTP_403_RETRIES:
                     raise
-                pause = HTTP_403_RETRY_PAUSE * (attempt + 1)
+                retries403 += 1
+                pause = HTTP_403_RETRY_PAUSE * retries403
                 logger.warning(f"[Download]{tag} HTTP 403 su {url}, riprovo tra {pause}s "
-                               f"({attempt + 1}/{HTTP_403_RETRIES})")
+                               f"({retries403}/{HTTP_403_RETRIES})")
                 time.sleep(pause)
 
     # ── Batch (coda intera) ──────────────────────────────────────
