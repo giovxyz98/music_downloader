@@ -261,15 +261,18 @@ class DownloadManager:
     def _start_block(self, tag: str) -> bool:
         """Registra un blocco anti-bot (una sola volta se piu' worker lo vedono
         insieme). Ritorna False se i blocchi di fila sono troppi: run interrotto."""
+        if self.cancel_event.is_set():
+            return False                  # run gia' interrotto da un altro worker: niente messaggi doppi
         with self._block_lock:
             now = time.monotonic()
             if now < self._blocked_until:
                 return True               # un altro worker lo ha gia' registrato
             self._bot_strikes += 1
             if self._bot_strikes > BOT_BLOCK_MAX_PAUSES:
-                logger.error(f"[Download]{tag} YouTube blocca ancora i download dopo {BOT_BLOCK_MAX_PAUSES} "
-                             f"attese da {BOT_BLOCK_PAUSE}s: run interrotto. Riprova piu' tardi: "
-                             f"le canzoni gia' scaricate vengono saltate.")
+                dopo = (f"dopo {BOT_BLOCK_MAX_PAUSES} attese da {BOT_BLOCK_PAUSE}s" if BOT_BLOCK_MAX_PAUSES
+                        else "(BOT_BLOCK_MAX_PAUSES = 0: nessuna attesa)")
+                logger.error(f"[Download]{tag} YouTube ha bloccato i download (\"not a bot\") {dopo}: "
+                             f"run interrotto. Riprova piu' tardi: le canzoni gia' scaricate vengono saltate.")
                 return False
             self._blocked_until = now + BOT_BLOCK_PAUSE
             logger.warning(f"[Download]{tag} YouTube ha bloccato i download (\"not a bot\"): pausa di "

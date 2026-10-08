@@ -70,9 +70,10 @@ _CFG_DEFAULTS: dict = {
     # per ogni worker, e se scatta il blocco si aspetta BOT_BLOCK_PAUSE secondi (tutti
     # i worker insieme) e si riprova; dopo BOT_BLOCK_MAX_PAUSES attese di fila senza
     # nessun download riuscito il run si interrompe (si riprende rilanciandolo).
+    # Con 0 (predefinito) il run si interrompe subito al primo blocco, senza attese.
     "DOWNLOAD_PAUSE":             2,
     "BOT_BLOCK_PAUSE":            600,
-    "BOT_BLOCK_MAX_PAUSES":       3,
+    "BOT_BLOCK_MAX_PAUSES":       0,
     "YOUTUBE_RESULTS":            5,
     "FILENAME_MAX_LENGTH":        180,
     "MAX_SEARCHES":               50,
